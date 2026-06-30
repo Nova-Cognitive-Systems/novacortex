@@ -29,7 +29,7 @@
     "typecheck:edge": "tsc --noEmit -p tsconfig.edge.json"
   },
   "dependencies": {
-    "@asteasolutions/zod-to-openapi": "^7.3.4",
+    "@asteasolutions/zod-to-openapi": "^8.5.0",
     "@memory-stack/core": "*",
     "@opentelemetry/auto-instrumentations-node": "^0.55.3",
     "@opentelemetry/exporter-trace-otlp-http": "^0.57.2",
