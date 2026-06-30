@@ -1,0 +1,122 @@
+[
+  {
+    "id": "q01",
+    "question": "Which programming language is path-planner written in, and why?",
+    "answer": "Rust, chosen for latency after p99 planning latency exceeded 400ms (it was rewritten from Python in 2024).",
+    "facts": [
+      "arch-02"
+    ]
+  },
+  {
+    "id": "q02",
+    "question": "Can robots call fleet-api over HTTP directly?",
+    "answer": "No. Robots talk over MQTT (EMQX); direct robot-to-fleet-api HTTP is forbidden and blocked at the network layer.",
+    "facts": [
+      "arch-03"
+    ]
+  },
+  {
+    "id": "q03",
+    "question": "Who owns path-planner and what needs their review?",
+    "answer": "Mara Voss; any change to the planning algorithm or the gRPC schema needs her review.",
+    "facts": [
+      "people-01"
+    ]
+  },
+  {
+    "id": "q04",
+    "question": "How do I undo a database migration at Helix?",
+    "answer": "You can't roll back; migrations are forward-only with no down migrations. You write a new forward migration to undo it.",
+    "facts": [
+      "conv-02"
+    ]
+  },
+  {
+    "id": "q05",
+    "question": "What should happen if a required environment variable is missing at service startup?",
+    "answer": "The service must crash on startup (fail-fast config, validated with zod), never start with a default.",
+    "facts": [
+      "conv-03"
+    ]
+  },
+  {
+    "id": "q06",
+    "question": "Why does the maintenance-log semantic search use an internal model instead of OpenAI?",
+    "answer": "Because maintenance logs contain customer-identifying robot serials that must not leave the EU cluster, so embeddings are served via internal vLLM.",
+    "facts": [
+      "deps-03"
+    ]
+  },
+  {
+    "id": "q07",
+    "question": "What happens to in-flight robots if path-planner goes down?",
+    "answer": "fleet-api serves a degraded mode: robots already en route continue on their last plan, but no new orders can be dispatched.",
+    "facts": [
+      "deps-01"
+    ]
+  },
+  {
+    "id": "q08",
+    "question": "How is robot battery percentage encoded in telemetry, and what's the common mistake?",
+    "answer": "It's reported 0-1000 (tenths of a percent); the common mistake is forgetting to divide by 10 for display, showing e.g. 1000% battery.",
+    "facts": [
+      "gotcha-02"
+    ]
+  },
+  {
+    "id": "q09",
+    "question": "What's the rule for adding a NOT NULL column, and which incident caused it?",
+    "answer": "Add it in two steps (nullable + backfill, then add the constraint). The rule came from INC-240, where a NOT NULL column without a default locked the orders table for 9 minutes.",
+    "facts": [
+      "inc-04"
+    ]
+  },
+  {
+    "id": "q10",
+    "question": "Who can trigger a fleet-wide safe-stop in production, and how does it work?",
+    "answer": "Only Sam Reyes and Mara Voss; it halts every robot via a retained MQTT message on the safety topic.",
+    "facts": [
+      "proc-02"
+    ]
+  },
+  {
+    "id": "q11",
+    "question": "Why can't path-planner be deployed with a rolling strategy?",
+    "answer": "Because its in-memory map/session state would be split across versions mid-planning; it uses blue-green-style full replacement instead (per ADR-019).",
+    "facts": [
+      "adr-04"
+    ]
+  },
+  {
+    "id": "q12",
+    "question": "Where is operational state stored versus time-series telemetry?",
+    "answer": "Operational state (orders, zones, robot registry) is in plain PostgreSQL tables; telemetry time-series is in TimescaleDB.",
+    "facts": [
+      "arch-04"
+    ]
+  },
+  {
+    "id": "q13",
+    "question": "Is it safe to cache robot order state in Redis for persistence?",
+    "answer": "No. Redis is only for ephemeral locks and rate-limiting; anything that must survive a restart goes to Postgres. The orders table is the system of record.",
+    "facts": [
+      "arch-05"
+    ]
+  },
+  {
+    "id": "q14",
+    "question": "What is the gRPC deadline between fleet-api and path-planner, and what goes wrong if it's not set?",
+    "answer": "250ms; if fleet-api doesn't set the deadline, slow plans pile up and exhaust the connection pool (it is not defaulted client-side).",
+    "facts": [
+      "gotcha-04"
+    ]
+  },
+  {
+    "id": "q15",
+    "question": "How long is raw telemetry retained, and who owns the downsampling?",
+    "answer": "Raw 1Hz data is kept 14 days (1-minute rollups 1 year, 1-hour rollups forever); the downsampling continuous aggregates are owned by Dev Okafor.",
+    "facts": [
+      "data-03"
+    ]
+  }
+]

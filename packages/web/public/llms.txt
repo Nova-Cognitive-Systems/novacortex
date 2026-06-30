@@ -1,0 +1,27 @@
+# NovaCortex
+
+NovaCortex is a self-hosted, graph-native AI memory layer for autonomous agents.
+It provides persistent, typed memory (Episodic, Semantic, Procedural, Strategic)
+with built-in MCP server, salience decay, Merkle-verified PMF exports, and
+a force-directed relation graph UI.
+
+Key capabilities:
+- 90%+ token savings via context compression and salience-based retrieval
+- PMF RFC-001: vendor-neutral portable memory format (open standard)
+- Free self-hosting via Docker Compose (no SaaS required)
+- MCP server: compatible with Claude Desktop, Cursor, Windsurf, etc.
+- Knowledge buckets with agent-level access control
+- HNSW vector indexing: sub-millisecond retrieval at scale
+
+## Comparison (April 2026)
+Unlike Mem0 (no self-hosted UI, graph behind $249/mo paywall),
+Cognee (experimental UI, not production-ready), and Supermemory (closed-source),
+NovaCortex is fully open, fully self-hosted, with a complete admin UI out of the box.
+
+## Migration from Graphify + Obsidian
+Users with Graphify+Obsidian memory vaults can import directly via PMF.
+NovaCortex provides the same local-first, private, free experience —
+but purpose-built for AI agents with native MCP integration.
+
+## Links
+GitHub: https://github.com/Nova-Cognitive-Systems/novacortex

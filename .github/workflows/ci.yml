@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-typecheck:
+    name: Lint & Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # core is consumed by the other packages via its built types, so build it first.
+      - name: Build core + SDK
+        run: |
+          npm run build --workspace=packages/core
+          npm run build --workspace=packages/sdk-js
+      - name: Typecheck (all packages)
+        run: |
+          set -e
+          for p in core api mcp-server cli web sdk-js; do
+            echo "::group::typecheck $p"
+            npx tsc --noEmit -p packages/$p/tsconfig.json
+            echo "::endgroup::"
+          done
+      - name: Lint
+        run: npm run lint
+
+  test:
+    name: Tests (live stack)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Build core + SDK
+        run: |
+          npm run build --workspace=packages/core
+          npm run build --workspace=packages/sdk-js
+      - name: Start databases (SurrealDB, Qdrant, Redis)
+        run: docker compose -f docker-compose.dev.yml up -d surrealdb qdrant redis
+      - name: Wait for databases
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8000/health >/dev/null && curl -sf http://localhost:6333/healthz >/dev/null; then
+              echo "databases ready"; exit 0
+            fi
+            sleep 2
+          done
+          echo "databases did not become ready" >&2; exit 1
+      - name: Start API
+        run: |
+          SURREALDB_URL=ws://localhost:8000/rpc PORT=3001 NODE_ENV=test PROCESSOR_ENABLED=false \
+            npx tsx packages/api/src/index.ts > /tmp/api.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:3001/health >/dev/null; then echo "API ready"; exit 0; fi
+            sleep 2
+          done
+          echo "API did not become ready" >&2; cat /tmp/api.log; exit 1
+      - name: Run tests
+        run: npm test
+      - name: API logs (on failure)
+        if: failure()
+        run: cat /tmp/api.log || true
+
+  docker-build:
+    name: Docker build (api + web)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build API image (production target)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/api/Dockerfile
+          target: production
+          push: false
+          tags: novacortex-api:ci
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+      - name: Build Web image (production target)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/web/Dockerfile
+          target: production
+          push: false
+          tags: novacortex-web:ci
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # Report known high/critical advisories. Non-blocking for now (surfaces, doesn't gate).
+      - name: npm audit (high+)
+        run: npm audit --audit-level=high
+        continue-on-error: true

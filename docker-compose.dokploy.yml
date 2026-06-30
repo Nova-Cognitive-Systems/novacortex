@@ -1,0 +1,252 @@
+# ============================================
+# NovaCortex - Dokploy Deployment
+# ============================================
+# Dokploy manages reverse proxy (Traefik) externally.
+# This compose only defines the application services.
+#
+# Usage:
+#   1. Create a "Compose" project in Dokploy
+#   2. Point to this file or paste contents
+#   3. Set environment variables in Dokploy UI:
+#      - SURREALDB_USER, SURREALDB_PASS (required)
+#      - JWT_SECRET, NEXTAUTH_SECRET (required)
+#      - REDIS_PASSWORD (required)
+#      - DOMAIN (required - your domain)
+#      - LICENSE_KEY (optional - Pro/Enterprise license)
+#      - OPENAI_API_KEY, ANTHROPIC_API_KEY (optional)
+#   4. Add domains in Dokploy:
+#      - Web: your-domain.com → port 3000
+#      - API: api.your-domain.com → port 3001
+# ============================================
+
+networks:
+  novacortex:
+    driver: bridge
+
+volumes:
+  surrealdb-data:
+  qdrant-data:
+  redis-data:
+
+services:
+  # ============================================
+  # API Service (Express.js)
+  # ============================================
+  api:
+    build:
+      context: .
+      dockerfile: packages/api/Dockerfile
+      target: production
+    container_name: novacortex-api
+    restart: unless-stopped
+    networks:
+      - novacortex
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - SURREALDB_URL=ws://surrealdb:8000/rpc
+      - SURREALDB_NAMESPACE=${SURREALDB_NAMESPACE:-novacortex}
+      - SURREALDB_DATABASE=${SURREALDB_DATABASE:-production}
+      - SURREALDB_USER=${SURREALDB_USER}
+      - SURREALDB_PASS=${SURREALDB_PASS}
+      - QDRANT_URL=http://qdrant:6333
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-7d}
+      - LICENSE_KEY=${LICENSE_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - PROCESSOR_ENABLED=${PROCESSOR_ENABLED:-true}
+    depends_on:
+      surrealdb:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+        reservations:
+          cpus: "0.5"
+          memory: 1G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ============================================
+  # Web Service (Next.js)
+  # ============================================
+  web:
+    build:
+      context: .
+      dockerfile: packages/web/Dockerfile
+      target: production
+      args:
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-https://api.${DOMAIN}}
+        - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-wss://api.${DOMAIN}}
+    container_name: novacortex-web
+    restart: unless-stopped
+    networks:
+      - novacortex
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-https://api.${DOMAIN}}
+      - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-wss://api.${DOMAIN}}
+      - API_INTERNAL_URL=http://novacortex-api:3001
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-https://${DOMAIN}}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ============================================
+  # SurrealDB (Document + Graph Database)
+  # ============================================
+  surrealdb:
+    image: surrealdb/surrealdb:v2.2
+    container_name: novacortex-surrealdb
+    restart: unless-stopped
+    user: root
+    networks:
+      - novacortex
+    command:
+      - start
+      - --log=info
+      - --user=${SURREALDB_USER}
+      - --pass=${SURREALDB_PASS}
+      - --bind=0.0.0.0:8000
+      - rocksdb:/data/database
+    volumes:
+      - surrealdb-data:/data
+    healthcheck:
+      test: ["CMD", "/surreal", "isready", "--conn", "http://localhost:8000"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+        reservations:
+          cpus: "0.25"
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================
+  # Qdrant (Vector Database)
+  # ============================================
+  qdrant:
+    image: qdrant/qdrant:v1.14.0
+    container_name: novacortex-qdrant
+    restart: unless-stopped
+    networks:
+      - novacortex
+    environment:
+      - QDRANT__SERVICE__ENABLE_TLS=false
+      - QDRANT__STORAGE__STORAGE_PATH=/qdrant/storage
+      - QDRANT__STORAGE__SNAPSHOTS_PATH=/qdrant/snapshots
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/localhost/6333' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+        reservations:
+          cpus: "0.25"
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================
+  # Redis (Cache + Sessions)
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    container_name: novacortex-redis
+    restart: unless-stopped
+    networks:
+      - novacortex
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --requirepass
+      - ${REDIS_PASSWORD}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 384M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"

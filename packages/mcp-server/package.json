@@ -1,0 +1,27 @@
+{
+  "name": "@memory-stack/mcp-server",
+  "version": "1.2.1",
+  "description": "MCP Server for Memory Stack",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "bin": {
+    "memory-stack-mcp": "./bin/mcp-server.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "test": "node --experimental-vm-modules ../../node_modules/vitest/vitest.mjs run"
+  },
+  "dependencies": {
+    "@memory-stack/core": "^1.0.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "claude-agent": {
+    "primaryNamespace": "test_dedup",
+    "readableNamespaces": [
+      "claude"
+    ]
+  }
+}

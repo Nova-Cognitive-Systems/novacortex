@@ -1,0 +1,88 @@
+# ============================================
+# Docker Ignore File
+# ============================================
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Dependencies (will be installed in container)
+node_modules
+**/node_modules
+
+# Build outputs (will be built in container)
+dist
+**/dist
+.next
+**/.next
+.turbo
+**/.turbo
+
+# Environment files (passed via compose)
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Test & Coverage
+coverage
+.nyc_output
+*.test.ts
+*.spec.ts
+__tests__
+
+# Documentation (not needed in container)
+docs
+*.md
+!README.md
+
+# CI/CD
+.github
+.gitlab-ci.yml
+.travis.yml
+Jenkinsfile
+
+# Backups
+backups
+
+# Temporary files
+tmp
+temp
+.tmp
+.temp
+
+# Development config
+docker-compose.dev.yml
+docker-compose.override.yml
+
+# Scripts (copy only what's needed)
+# scripts
+
+# Claude/AI config
+.claude
+.claude-flow
+
+# Misc
+*.tgz
+*.tar.gz
+.npmrc
+.yarnrc

@@ -1,0 +1,169 @@
+# ============================================
+# NovaCortex - Unraid Deployment
+# Uses pre-built multi-arch images from GHCR.
+#
+# Usage:
+#   1. ./scripts/gen-env.sh        # generates .env with strong random secrets
+#   2. Edit .env: set OPENAI_API_KEY (optional, for semantic search) and APPDATA
+#   3. docker compose -f docker-compose.unraid.yml up -d
+#   4. Read the bootstrap code from logs: docker logs novacortex-api | grep Bootstrap
+#
+# Images: ghcr.io/nova-cognitive-systems/novacortex-{api,web}
+# Data is bind-mounted under ${APPDATA} so it survives docker.img rebuilds and is
+# covered by Unraid appdata backups.
+# ============================================
+
+networks:
+  novacortex:
+    driver: bridge
+
+services:
+
+  # ============================================
+  # SurrealDB — Primary Database
+  # ============================================
+  surrealdb:
+    image: surrealdb/surrealdb:v2.2
+    container_name: novacortex-surrealdb
+    restart: unless-stopped
+    networks:
+      - novacortex
+    command:
+      - start
+      - --log=info
+      - --user=${SURREALDB_USER:-root}
+      - --pass=${SURREALDB_PASS:?set SURREALDB_PASS in .env (run scripts/gen-env.sh)}
+      - --bind=0.0.0.0:8000
+      - rocksdb:/data/database
+    volumes:
+      - ${APPDATA:-/mnt/user/appdata/novacortex}/surrealdb:/data
+    healthcheck:
+      test: ["CMD", "/surreal", "isready", "--conn", "http://localhost:8000"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ============================================
+  # Qdrant — Vector Database
+  # ============================================
+  qdrant:
+    image: qdrant/qdrant:v1.14.0
+    container_name: novacortex-qdrant
+    restart: unless-stopped
+    networks:
+      - novacortex
+    environment:
+      - QDRANT__SERVICE__ENABLE_TLS=false
+      - QDRANT__STORAGE__STORAGE_PATH=/qdrant/storage
+    volumes:
+      - ${APPDATA:-/mnt/user/appdata/novacortex}/qdrant:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333 && echo ok'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ============================================
+  # Redis — Session / Rate-Limit Cache
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    container_name: novacortex-redis
+    restart: unless-stopped
+    networks:
+      - novacortex
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --requirepass
+      - ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env (run scripts/gen-env.sh)}
+    volumes:
+      - ${APPDATA:-/mnt/user/appdata/novacortex}/redis:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+
+  # ============================================
+  # NovaCortex API  (port 3001, exposed for Unraid)
+  # ============================================
+  api:
+    image: ghcr.io/nova-cognitive-systems/novacortex-api:${NOVACORTEX_VERSION:-1.2.1}
+    container_name: novacortex-api
+    restart: unless-stopped
+    networks:
+      - novacortex
+    ports:
+      - "${API_PORT:-3001}:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - SURREALDB_URL=ws://surrealdb:8000/rpc
+      - SURREALDB_NAMESPACE=${SURREALDB_NAMESPACE:-novacortex}
+      - SURREALDB_DATABASE=${SURREALDB_DATABASE:-production}
+      - SURREALDB_USER=${SURREALDB_USER:-root}
+      - SURREALDB_PASS=${SURREALDB_PASS:?set SURREALDB_PASS in .env}
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379
+      # Embeddings are OFF unless OPENAI_API_KEY is set. To keep data fully local,
+      # point OPENAI_BASE_URL at an OpenAI-compatible local server (e.g. Ollama/LiteLLM).
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
+      # Set to your UI origin(s) for a locked-down CORS allowlist.
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      # Optional Pro/Enterprise license. Empty = free tier.
+      - LICENSE_KEY=${LICENSE_KEY:-}
+    depends_on:
+      surrealdb:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ============================================
+  # NovaCortex Web UI  (port 3000, exposed for Unraid)
+  # ============================================
+  web:
+    image: ghcr.io/nova-cognitive-systems/novacortex-web:${NOVACORTEX_VERSION:-1.2.1}
+    container_name: novacortex-web
+    restart: unless-stopped
+    networks:
+      - novacortex
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+      # The browser reaches the API via the Web UI's own same-origin /api/v1 proxy,
+      # which forwards to API_INTERNAL_URL — so no public API URL needs to be set.
+      - API_INTERNAL_URL=http://api:3001
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

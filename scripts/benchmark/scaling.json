@@ -1,0 +1,40 @@
+{
+  "meta": {
+    "date": "2026-06-26T07:36:08.875Z",
+    "realFacts": 42,
+    "totalFacts": 560,
+    "questions": 15,
+    "topK": 5,
+    "answerModel": "gpt-4o-mini"
+  },
+  "retrieve": {
+    "avgInTok": 305,
+    "avgMs": 1312,
+    "accuracy": 93,
+    "recallFull": 100,
+    "costUSD": 0.00092565
+  },
+  "dump": [
+    {
+      "size": 42,
+      "avgInTok": 2028,
+      "avgMs": 1161,
+      "accuracy": 100,
+      "costUSD": 0.004840349999999999
+    },
+    {
+      "size": 220,
+      "avgInTok": 10157,
+      "avgMs": 1230,
+      "accuracy": 100,
+      "costUSD": 0.023147999999999995
+    },
+    {
+      "size": 560,
+      "avgInTok": 25675,
+      "avgMs": 1305,
+      "accuracy": 100,
+      "costUSD": 0.0580653
+    }
+  ]
+}

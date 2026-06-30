@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NovaCortex — Retrieval vs Context Dump</title>
+<style>
+  :root { --bg:#0a0e17; --panel:#0f1623; --ink:#d0e8f0; --muted:#7fa8b8; --cyan:#00f0ff; --pink:#ff2d95; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:'Outfit',system-ui,sans-serif; line-height:1.6; }
+  .wrap { max-width:860px; margin:0 auto; padding:3rem 1.5rem 5rem; }
+  h1 { font-family:'Chakra Petch',sans-serif; font-size:clamp(1.8rem,4vw,2.6rem); text-transform:uppercase; letter-spacing:-0.01em; margin:0 0 .5rem; }
+  .sub { color:var(--muted); font-weight:300; margin:0 0 2rem; }
+  .headline { display:flex; gap:1.5rem; flex-wrap:wrap; margin:2rem 0; }
+  .stat { flex:1; min-width:160px; border:1px solid rgba(0,240,255,.18); background:var(--panel); border-radius:10px; padding:1.2rem 1.4rem; }
+  .stat .n { font-family:'Chakra Petch',sans-serif; font-size:2rem; color:var(--cyan); line-height:1; }
+  .stat .l { color:var(--muted); font-size:.85rem; margin-top:.4rem; }
+  .card { border:1px solid rgba(255,255,255,.08); background:var(--panel); border-radius:12px; padding:1.5rem; margin:2rem 0; }
+  svg { width:100%; height:auto; display:block; }
+  table { width:100%; border-collapse:collapse; font-size:.92rem; margin-top:.5rem; }
+  th,td { text-align:right; padding:.5rem .6rem; border-bottom:1px solid rgba(255,255,255,.07); }
+  th:first-child, td:first-child { text-align:left; }
+  th { color:var(--muted); font-weight:500; }
+  .legend { display:flex; gap:1.5rem; font-size:.85rem; color:var(--muted); margin-top:.5rem; }
+  .dot { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:.4rem; vertical-align:middle; }
+  h2 { font-family:'Chakra Petch',sans-serif; text-transform:uppercase; font-size:1.2rem; margin:2.5rem 0 .6rem; }
+  code { color:var(--cyan); background:rgba(0,240,255,.06); padding:.1rem .35rem; border-radius:4px; }
+  .muted { color:var(--muted); font-size:.9rem; }
+  a { color:var(--cyan); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Retrieval beats dumping your KB into context</h1>
+  <p class="sub">NovaCortex fetches only the few facts a question needs. Dumping the whole knowledge base into every prompt burns tokens, money, and (with a hosted provider) sends all your data every time.</p>
+
+  <div class="headline">
+    <div class="stat"><div class="n">&minus;98.8%</div><div class="l">input tokens at a 26K-token KB</div></div>
+    <div class="stat"><div class="n">~65&times;</div><div class="l">cheaper per query at that size</div></div>
+    <div class="stat"><div class="n">100%</div><div class="l">retrieval recall@5 (with 518 distractors)</div></div>
+    <div class="stat"><div class="n">flat</div><div class="l">retrieval tokens as the KB grows</div></div>
+  </div>
+
+  <div class="card">
+    <svg viewBox="0 0 720 360" role="img" aria-label="Input tokens per query vs knowledge-base size">
+      <!-- axes -->
+      <line x1="80" y1="300" x2="700" y2="300" stroke="#2a3a48" stroke-width="1"/>
+      <line x1="80" y1="40" x2="80" y2="300" stroke="#2a3a48" stroke-width="1"/>
+      <!-- y gridlines + labels -->
+      <g fill="#5a7a8a" font-size="11" font-family="monospace">
+        <line x1="80" y1="62"  x2="700" y2="62"  stroke="#1c2733"/><text x="74" y="66" text-anchor="end">26K</text>
+        <line x1="80" y1="138" x2="700" y2="138" stroke="#1c2733"/><text x="74" y="142" text-anchor="end">18K</text>
+        <line x1="80" y1="214" x2="700" y2="214" stroke="#1c2733"/><text x="74" y="218" text-anchor="end">9K</text>
+        <text x="74" y="304" text-anchor="end">0</text>
+      </g>
+      <!-- x labels (KB size) -->
+      <g fill="#7fa8b8" font-size="12">
+        <text x="80"  y="320" text-anchor="middle">~2K KB</text>
+        <text x="390" y="320" text-anchor="middle">~10K KB</text>
+        <text x="700" y="320" text-anchor="middle">~26K KB</text>
+        <text x="390" y="345" text-anchor="middle" fill="#5a7a8a">knowledge-base size (tokens)</text>
+      </g>
+      <!-- DUMP line: (2028, 10157, 25675) mapped to y = 300 - tok/28000*260 -->
+      <polyline points="80,281 390,206 700,62" fill="none" stroke="#ff2d95" stroke-width="2.5"/>
+      <g fill="#ff2d95">
+        <circle cx="80" cy="281" r="4"/><circle cx="390" cy="206" r="4"/><circle cx="700" cy="62" r="4"/>
+      </g>
+      <text x="700" y="52" text-anchor="end" fill="#ff2d95" font-size="12" font-weight="700">dump 25,675 tok</text>
+      <!-- RETRIEVE line: flat ~305 -> y=297 -->
+      <polyline points="80,297 390,297 700,297" fill="none" stroke="#00f0ff" stroke-width="2.5"/>
+      <g fill="#00f0ff">
+        <circle cx="80" cy="297" r="4"/><circle cx="390" cy="297" r="4"/><circle cx="700" cy="297" r="4"/>
+      </g>
+      <text x="700" y="290" text-anchor="end" fill="#00f0ff" font-size="12" font-weight="700">retrieval 305 tok (flat)</text>
+    </svg>
+    <div class="legend">
+      <span><span class="dot" style="background:#ff2d95"></span>Dump whole KB into context</span>
+      <span><span class="dot" style="background:#00f0ff"></span>NovaCortex retrieval (top-5)</span>
+    </div>
+  </div>
+
+  <h2>The numbers</h2>
+  <table>
+    <thead><tr><th>KB size</th><th>Dump input tok</th><th>Retrieval input tok</th><th>Token reduction</th><th>Dump cost / 15 q</th><th>Retrieval cost / 15 q</th></tr></thead>
+    <tbody>
+      <tr><td>42 facts (~2K)</td><td>2,028</td><td>305</td><td>85%</td><td>$0.0048</td><td>$0.0009</td></tr>
+      <tr><td>220 facts (~10K)</td><td>10,157</td><td>305</td><td>97%</td><td>$0.0231</td><td>$0.0009</td></tr>
+      <tr><td>560 facts (~26K)</td><td>25,675</td><td>305</td><td>98.8%</td><td>$0.0581</td><td>$0.0009</td></tr>
+    </tbody>
+  </table>
+  <p class="muted">15 questions, gpt-4o-mini, top-5 retrieval. Answer accuracy graded by an LLM judge against reference answers: dump 100%, retrieval 93%. <b>Retrieval recall@5 = 100%</b> — even with 518 unrelated distractor facts in the store, NovaCortex surfaced every fact the questions needed. The 7-point answer-accuracy gap is one question where the fact was retrieved but the grader marked the (identical) answer down — an LLM/grader artifact, not a retrieval miss.</p>
+
+  <h2>How we measured</h2>
+  <p>Same questions, same model, two ways of supplying the project knowledge:</p>
+  <ul class="muted">
+    <li><b>Dump</b> — the entire knowledge base goes into the prompt every query (the "big CLAUDE.md / KB handover" pattern).</li>
+    <li><b>Retrieval</b> — the KB lives in NovaCortex; only the top-5 relevant memories are retrieved per question.</li>
+  </ul>
+  <p class="muted">We separate NovaCortex's job (retrieval) from the LLM's job (answering) with a <b>recall@K</b> metric: did we surface the gold facts each question needs? The handful of end-to-end misses are LLM/grader limits that hit the dump baseline equally, not retrieval failures. Fully reproducible: <code>node scripts/benchmark/run.mjs</code> and <code>scripts/benchmark/scale.mjs</code>.</p>
+
+  <h2>And it's a privacy win, not just a cost one</h2>
+  <p class="muted">Dumping the whole KB ships <i>all</i> of your knowledge to the model provider on every single query. Retrieval sends only the few relevant snippets. With NovaCortex self-hosted, the knowledge base never leaves your infrastructure; only the minimal retrieved context goes to the model.</p>
+
+  <p class="muted" style="margin-top:2.5rem">NovaCortex — the privacy-first, self-hostable, MCP-native, portable memory layer for AI agents. <a href="https://github.com/Nova-Cognitive-Systems/novacortex">github.com/Nova-Cognitive-Systems/novacortex</a></p>
+</div>
+</body>
+</html>

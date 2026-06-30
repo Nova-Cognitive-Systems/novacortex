@@ -1,0 +1,6 @@
+{
+  "_comment": "Copy to .memory-stack-license (gitignored) OR set LICENSE_KEY in your .env. The self-hosted OSS core runs fully on the free tier with no key. A key only unlocks Pro/Enterprise tier limits (namespace count, federation). NEVER commit a real key.",
+  "key": "MS-FREE-xxxxxxxx-xxxxxxxx-xxxxxxxx-XXXXXXXX",
+  "tier": "free",
+  "email": "you@example.com"
+}

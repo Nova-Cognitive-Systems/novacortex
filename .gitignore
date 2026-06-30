@@ -1,0 +1,37 @@
+node_modules/
+.next/
+dist/
+.env
+.env.local
+.env.local.test
+.env.unraid
+.env.production
+.env.deploy
+.env.*
+!.env.example
+*.log
+# Local self-host deploy data (DB volumes, secrets) — never commit
+/data/
+data-bench/
+# License key files contain live credentials — never commit (ship *.example only)
+.memory-stack-license
+packages/api/.memory-stack-license
+*.license
+# ed25519 license signing private key (issuer-only secret) — NEVER commit
+config/.license-signing-key.pem
+*.signing-key.pem
+LICENSE_SIGNING_KEY*
+# Local Python venv for the SDK
+packages/sdk-python/.venv/
+.worktrees/
+__pycache__/
+*.pyc
+*.pyo
+*-export.json
+.gstack/
+
+# Local Claude Code / claude-flow tooling — not part of the product
+.claude/
+.claude-flow/
+CLAUDE.md
+.mcp.json

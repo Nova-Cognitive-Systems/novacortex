@@ -1,0 +1,200 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>NovaCortex</Name>
+  <Repository>ghcr.io/nova/novacortex</Repository>
+  <Registry>https://github.com/Nova/novacortex</Registry>
+  <Branch>
+    <Tag>latest</Tag>
+    <TagDescription>Latest stable release</TagDescription>
+  </Branch>
+  <Network>bridge</Network>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/Nova/novacortex/issues</Support>
+  <Project>https://github.com/Nova/novacortex</Project>
+  <Overview>
+    NovaCortex - Semantic Memory System for AI Agents.
+
+    Multi-service stack with Web UI, API, SurrealDB, Qdrant vector database, and Redis cache.
+
+    IMPORTANT: This template uses Docker Compose. Install the "Docker Compose Manager" plugin
+    from Community Apps, then use the docker-compose.yml from templates/unraid/ in this repository.
+
+    Quick Start:
+    1. Install "Docker Compose Manager" plugin on Unraid
+    2. Copy templates/unraid/docker-compose.yml to /boot/config/plugins/compose.manager/projects/novacortex/
+    3. Set environment variables in the .env file
+    4. Start the stack from the Compose Manager UI
+
+    Default Ports: Web UI on 3000, API on 3001
+    Default Data: /mnt/user/appdata/novacortex/
+  </Overview>
+  <Category>AI: Productivity: Tools:</Category>
+  <Description>
+    NovaCortex is a self-hosted semantic memory system for AI agents.
+    It provides episodic, semantic, procedural and working memory with
+    vector search, knowledge base management, and namespace federation.
+    Includes Web UI, REST API, SurrealDB, Qdrant, and Redis.
+  </Description>
+  <Date>2026-04-03</Date>
+  <Changes>
+    [2026-04-03] Initial Unraid Community App template
+  </Changes>
+  <Requires>
+    Docker Compose Manager plugin (install from Community Apps).
+    Minimum 8GB RAM recommended for all services.
+  </Requires>
+  <WebUI>http://[IP]:[PORT:3000]/</WebUI>
+  <ExtraSearchTerms>ai memory semantic vector knowledge agent llm</ExtraSearchTerms>
+
+  <!-- Web UI Port -->
+  <Config
+    Name="Web UI Port"
+    Target="3000"
+    Default="3000"
+    Mode="tcp"
+    Description="NovaCortex Web UI port"
+    Type="Port"
+    Display="always"
+    Required="true"
+    Mask="false">3000</Config>
+
+  <!-- API Port -->
+  <Config
+    Name="API Port"
+    Target="3001"
+    Default="3001"
+    Mode="tcp"
+    Description="NovaCortex API port"
+    Type="Port"
+    Display="always"
+    Required="true"
+    Mask="false">3001</Config>
+
+  <!-- SurrealDB Data -->
+  <Config
+    Name="SurrealDB Data"
+    Target="/data"
+    Default="/mnt/user/appdata/novacortex/surrealdb"
+    Mode="rw"
+    Description="SurrealDB persistent data"
+    Type="Path"
+    Display="always"
+    Required="true"
+    Mask="false">/mnt/user/appdata/novacortex/surrealdb</Config>
+
+  <!-- Qdrant Data -->
+  <Config
+    Name="Qdrant Data"
+    Target="/qdrant/storage"
+    Default="/mnt/user/appdata/novacortex/qdrant"
+    Mode="rw"
+    Description="Qdrant vector database storage"
+    Type="Path"
+    Display="always"
+    Required="true"
+    Mask="false">/mnt/user/appdata/novacortex/qdrant</Config>
+
+  <!-- Redis Data -->
+  <Config
+    Name="Redis Data"
+    Target="/data"
+    Default="/mnt/user/appdata/novacortex/redis"
+    Mode="rw"
+    Description="Redis persistent data"
+    Type="Path"
+    Display="always"
+    Required="true"
+    Mask="false">/mnt/user/appdata/novacortex/redis</Config>
+
+  <!-- Required Environment Variables -->
+  <Config
+    Name="SurrealDB User"
+    Target="SURREALDB_USER"
+    Default="novacortex"
+    Description="SurrealDB root username"
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="false">novacortex</Config>
+
+  <Config
+    Name="SurrealDB Password"
+    Target="SURREALDB_PASS"
+    Default=""
+    Description="SurrealDB root password (set a strong password)"
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="true"></Config>
+
+  <Config
+    Name="JWT Secret"
+    Target="JWT_SECRET"
+    Default=""
+    Description="API authentication secret (min 32 chars, e.g. use: openssl rand -hex 32)"
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="true"></Config>
+
+  <Config
+    Name="NextAuth Secret"
+    Target="NEXTAUTH_SECRET"
+    Default=""
+    Description="Session encryption secret (min 32 chars, e.g. use: openssl rand -hex 32)"
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="true"></Config>
+
+  <Config
+    Name="Redis Password"
+    Target="REDIS_PASSWORD"
+    Default=""
+    Description="Redis authentication password (set a strong password)"
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="true"></Config>
+
+  <!-- Optional Environment Variables -->
+  <Config
+    Name="License Key"
+    Target="LICENSE_KEY"
+    Default=""
+    Description="NovaCortex Pro/Enterprise license key (optional)"
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="false"></Config>
+
+  <Config
+    Name="OpenAI API Key"
+    Target="OPENAI_API_KEY"
+    Default=""
+    Description="OpenAI API key for embeddings (optional)"
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="true"></Config>
+
+  <Config
+    Name="Anthropic API Key"
+    Target="ANTHROPIC_API_KEY"
+    Default=""
+    Description="Anthropic API key (optional)"
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="true"></Config>
+
+  <Config
+    Name="Log Level"
+    Target="LOG_LEVEL"
+    Default="info"
+    Description="API log level: debug, info, warn, error"
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">info</Config>
+</Container>

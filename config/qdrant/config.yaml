@@ -1,0 +1,67 @@
+# ============================================
+# Qdrant Configuration
+# ============================================
+
+log_level: INFO
+
+storage:
+  # Storage path (mounted volume)
+  storage_path: /qdrant/storage
+
+  # Snapshots path
+  snapshots_path: /qdrant/snapshots
+
+  # Performance settings
+  performance:
+    # Number of segments to create per collection
+    max_search_threads: 0  # 0 = auto (number of CPUs)
+
+    # Optimize for speed vs memory
+    # "mmap" for large collections, "ram" for small/fast
+    storage: mmap
+
+  # Optimizer settings
+  optimizers:
+    # Minimum number of vectors to start optimization
+    default_segment_number: 2
+
+    # Max segment size in KB (0 = no limit)
+    max_segment_size_kb: 0
+
+    # Memmap threshold - vectors above this count use mmap
+    memmap_threshold_kb: 20000
+
+    # Indexing threshold - start building index after this many vectors
+    indexing_threshold_kb: 10000
+
+    # Flush interval in seconds
+    flush_interval_sec: 5
+
+  # WAL (Write-Ahead Log) settings
+  wal:
+    # WAL capacity in MB
+    wal_capacity_mb: 32
+
+    # WAL segment capacity in MB
+    wal_segments_ahead: 0
+
+# Service settings
+service:
+  # Max request size in MB
+  max_request_size_mb: 32
+
+  # GRPC port
+  grpc_port: 6334
+
+  # Enable CORS
+  enable_cors: true
+
+  # API key (set via environment variable)
+  # api_key: ${QDRANT_API_KEY}
+
+# Cluster settings (single node for now)
+cluster:
+  enabled: false
+
+# Telemetry
+telemetry_disabled: true

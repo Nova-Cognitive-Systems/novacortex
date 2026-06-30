@@ -1,0 +1,513 @@
+{
+  "summary": {
+    "meta": {
+      "date": "2026-06-26T07:33:38.039Z",
+      "corpusFacts": 42,
+      "questions": 15,
+      "topK": 5,
+      "answerModel": "gpt-4o-mini"
+    },
+    "dump": {
+      "avgPromptTokens": 2028,
+      "avgLatencyMs": 1211,
+      "accuracy": 100,
+      "totalInTokens": 30417,
+      "totalOutTokens": 456,
+      "costUSD": 0.004836149999999999
+    },
+    "retrieve": {
+      "avgPromptTokens": 310,
+      "avgLatencyMs": 1544,
+      "accuracy": 93,
+      "totalInTokens": 4645,
+      "totalOutTokens": 418,
+      "costUSD": 0.00094755
+    },
+    "tokReduction": 85,
+    "costReduction": 80,
+    "recallAtK": 100,
+    "avgRecall": 100
+  },
+  "results": [
+    {
+      "id": "q01",
+      "question": "Which programming language is path-planner written in, and why?",
+      "goldFacts": [
+        "arch-02"
+      ],
+      "retrievedIds": [
+        "arch-02",
+        "adr-01",
+        "people-01",
+        "deps-01",
+        "inc-01"
+      ],
+      "recall": 1,
+      "fullRecall": true,
+      "dump": {
+        "promptTokens": 2027,
+        "completionTokens": 11,
+        "ms": 846,
+        "correct": true,
+        "answer": "Path-planner is written in Rust for latency reasons."
+      },
+      "retrieve": {
+        "promptTokens": 314,
+        "completionTokens": 11,
+        "ms": 625,
+        "searchMs": 20,
+        "retrieved": 5,
+        "correct": true,
+        "answer": "Path-planner is written in Rust for latency reasons."
+      }
+    },
+    {
+      "id": "q02",
+      "question": "Can robots call fleet-api over HTTP directly?",
+      "goldFacts": [
+        "arch-03"
+      ],
+      "retrievedIds": [
+        "arch-03",
+        "arch-01",
+        "deps-01",
+        "deps-02",
+        "gotcha-04"
+      ],
+      "recall": 1,
+      "fullRecall": true,
+      "dump": {
+        "promptTokens": 2023,
+        "completionTokens": 19,
+        "ms": 2861,
+        "correct": true,
+        "answer": "No, direct robot-to-fleet-api HTTP calls are forbidden and blocked at the network layer."
+      },
+      "retrieve": {
+        "promptTokens": 303,
+        "completionTokens": 19,
+        "ms": 999,
+        "searchMs": 28,
+        "retrieved": 5,
+        "correct": true,
+        "answer": "No, direct robot-to-fleet-api HTTP calls are forbidden and blocked at the network layer."
+      }
+    },
+    {
+      "id": "q03",
+      "question": "Who owns path-planner and what needs their review?",
+      "goldFacts": [
+        "people-01"
+      ],
+      "retrievedIds": [
+        "people-01",
+        "arch-02",
+        "adr-01",
+        "deps-01",
+        "inc-01"
+      ],
+      "recall": 1,
+      "fullRecall": true,
+      "dump": {
+        "promptTokens": 2025,
+        "completionTokens": 25,
+        "ms": 2269,
+        "correct": true,
+        "answer": "Path-planner is owned by Mara Voss. Any change to the planning algorithm or the gRPC schema needs her review."
+      },
+      "retrieve": {
+        "promptTokens": 312,
+        "completionTokens": 26,
+        "ms": 1230,
+        "searchMs": 20,
+        "retrieved": 5,
+        "correct": true,
+        "answer": "Path-planner is owned by Mara Voss, and any change to the planning algorithm or the gRPC schema needs her review."
+      }
+    },
+    {
+      "id": "q04",
+      "question": "How do I undo a database migration at Helix?",
+      "goldFacts": [
+        "conv-02"
+      ],
+      "retrievedIds": [
+        "conv-02",
+        "arch-05",
+        "arch-01",
+        "inc-04",
+        "gotcha-01"
+      ],
+      "recall": 1,
+      "fullRecall": true,
+      "dump": {
+        "promptTokens": 2025,
+        "completionTokens": 22,
+        "ms": 1020,
+        "correct": true,
+        "answer": "To undo a database migration at Helix, you write a new forward migration. There are no down migrations."
+      },
+      "retrieve": {
+        "promptTokens": 317,
+        "completionTokens": 16,
+        "ms": 1939,
+        "searchMs": 28,
+        "retrieved": 5,
+        "correct": true,
+        "answer": "To undo a database migration at Helix, you write a new forward migration."
+      }
+    },
+    {
+      "id": "q05",
+      "question": "What should happen if a required environment variable is missing at service startup?",
+      "goldFacts": [
+        "conv-03"
+      ],
+      "retrievedIds": [
+        "conv-03",
+        "inc-04",
+        "gotcha-03",
+        "deploy-04",
+        "deps-01"
+      ],
+      "recall": 1,
+      "fullRecall": true,
+      "dump": {
+        "promptTokens": 2028,
+        "completionTokens": 26,
+        "ms": 940,
+        "correct": true,
+        "answer": "The service must crash on startup, never start with a default. This is called fail-fast config and is enforced in code review."
+      },
+      "retrieve": {
+        "promptTokens": 296,
+        "completionTokens": 7,
+        "ms": 1126,
+        "searchMs": 20,
+        "retrieved": 5,
+        "correct": true,
+        "answer": "The service must crash on startup."
+      }
+    },
+    {
+      "id": "q06",
+      "question": "Why does the maintenance-log semantic search use an internal model instead of OpenAI?",
+      "goldFacts": [
+        "deps-03"
+      ],
+      "retrievedIds": [
+        "deps-03",
+        "arch-04",
+        "arch-01",
+        "adr-01",
+        "data-02"
+      ],
+      "recall": 1,
+      "fullRecall": true,
+      "dump": {
+        "promptTokens": 2030,
+        "completionTokens": 31,
+        "ms": 1309,
+        "correct": true,
+        "answer": "The maintenance-log semantic search uses an internal model instead of OpenAI because maintenance logs contain customer-identifying robot serials and must not leave the EU cluster."
+      },
+      "retrieve": {
+        "promptTokens": 299,
+        "completionTokens": 31,
+        "ms": 1666,
+        "searchMs": 20,
+        "retrieved": 5,
+        "correct": true,
+        "answer": "The maintenance-log semantic search uses an internal model instead of OpenAI because the logs contain customer-identifying robot serials and must not leave the EU cluster."
+      }
+    },
+    {
+      "id": "q07",
+      "question": "What happens to in-flight robots if path-planner goes down?",
+      "goldFacts": [
+        "deps-01"
+      ],
+      "retrievedIds": [
+        "deps-01",
+        "inc-01",
+        "adr-01",
+        "arch-01",
+        "people-01"
+      ],
+      "recall": 1,
+      "fullRecall": true,
+      "dump": {
+        "promptTokens": 2027,
+        "completionTokens": 32,
+        "ms": 870,
+        "correct": true,
+        "answer": "If path-planner goes down, fleet-api serves a degraded mode where robots already en route continue on their last plan, but no new orders can be dispatched."
+      },
+      "retrieve": {
+        "promptTokens": 322,
+        "completionTokens": 24,
+        "ms": 1077,
+        "searchMs": 26,
+        "retrieved": 5,
+        "correct": true,
+        "answer": "If path-planner goes down, in-flight robots continue on their last plan, but no new orders can be dispatched."
+      }
+    },
+    {
+      "id": "q08",
+      "question": "How is robot battery percentage encoded in telemetry, and what's the common mistake?",
+      "goldFacts": [
+        "gotcha-02"
+      ],
+      "retrievedIds": [
+        "gotcha-02",
+        "inc-02",
+        "arch-03",
+        "arch-04",
+        "conv-05"
+      ],
+      "recall": 1,
+      "fullRecall": true,
+      "dump": {
+        "promptTokens": 2029,
+        "completionTokens": 55,
+        "ms": 1214,
+        "correct": true,
+        "answer": "Robot battery percentage in telemetry is reported as a value from 0 to 1000 (tenths of a percent). The common mistake is that new engineers often forget to divide this value by 10 for display, resulting in dashboards that incorrectly show 1000% battery."
+      },
+      "retrieve": {
+        "promptTokens": 315,
+        "completionTokens": 51,
+        "ms": 5021,
+        "searchMs": 21,
+        "retrieved": 5,
+        "correct": true,
+        "answer": "Robot battery percentage in telemetry is reported on a scale of 0-1000 (tenths of a percent). The common mistake is that new engineers often forget to divide by 10 for display, resulting in dashboards that show 1000% battery."
+      }
+    },
+    {
+      "id": "q09",
+      "question": "What's the rule for adding a NOT NULL column, and which incident caused it?",
+      "goldFacts": [
+        "inc-04"
+      ],
+      "retrievedIds": [
+        "inc-04",
+        "gotcha-01",
+        "inc-02",
+        "adr-03",
+        "sec-02"
+      ],
+      "recall": 1,
+      "fullRecall": true,
+      "dump": {
+        "promptTokens": 2030,
+        "completionTokens": 47,
+        "ms": 1066,
+        "correct": true,
+        "answer": "The rule for adding a NOT NULL column is that it must be done in two steps: first, add the column as nullable and backfill it, then add the NOT NULL constraint. This rule was established after Incident INC-240."
+      },
+      "retrieve": {
+        "promptTokens": 321,
+        "completionTokens": 53,
+        "ms": 1715,
+        "searchMs": 19,
+        "retrieved": 5,
+        "correct": false,
+        "answer": "The rule for adding a NOT NULL column is that it must be done in two steps: first, add the column as nullable and backfill it, then add the NOT NULL constraint. This rule was established due to Incident INC-240 in October 2025."
+      }
+    },
+    {
+      "id": "q10",
+      "question": "Who can trigger a fleet-wide safe-stop in production, and how does it work?",
+      "goldFacts": [
+        "proc-02"
+      ],
+      "retrievedIds": [
+        "proc-02",
+        "proc-01",
+        "adr-04",
+        "inc-01",
+        "deps-01"
+      ],
+      "recall": 1,
+      "fullRecall": true,
+      "dump": {
+        "promptTokens": 2031,
+        "completionTokens": 37,
+        "ms": 926,
+        "correct": true,
+        "answer": "Only Sam Reyes and Mara Voss can trigger a fleet-wide safe-stop in production. It works by commanding every robot to halt in place via a retained MQTT message on the safety topic."
+      },
+      "retrieve": {
+        "promptTokens": 309,
+        "completionTokens": 38,
+        "ms": 1263,
+        "searchMs": 20,
+        "retrieved": 5,
+        "correct": true,
+        "answer": "Only Sam Reyes and Mara Voss can trigger a fleet-wide safe-stop in production. It works by sending a retained MQTT message on the safety topic that commands every robot to halt in place."
+      }
+    },
+    {
+      "id": "q11",
+      "question": "Why can't path-planner be deployed with a rolling strategy?",
+      "goldFacts": [
+        "adr-04"
+      ],
+      "retrievedIds": [
+        "adr-04",
+        "adr-01",
+        "inc-01",
+        "arch-02",
+        "deps-01"
+      ],
+      "recall": 1,
+      "fullRecall": true,
+      "dump": {
+        "promptTokens": 2026,
+        "completionTokens": 25,
+        "ms": 1180,
+        "correct": true,
+        "answer": "Path-planner cannot be deployed with a rolling strategy because its in-memory map state would be split across versions mid-planning."
+      },
+      "retrieve": {
+        "promptTokens": 304,
+        "completionTokens": 24,
+        "ms": 707,
+        "searchMs": 15,
+        "retrieved": 5,
+        "correct": true,
+        "answer": "Path-planner cannot be deployed with a rolling strategy because in-memory map state would be split across versions mid-planning."
+      }
+    },
+    {
+      "id": "q12",
+      "question": "Where is operational state stored versus time-series telemetry?",
+      "goldFacts": [
+        "arch-04"
+      ],
+      "retrievedIds": [
+        "arch-04",
+        "data-03",
+        "conv-04",
+        "adr-02",
+        "inc-02"
+      ],
+      "recall": 1,
+      "fullRecall": true,
+      "dump": {
+        "promptTokens": 2024,
+        "completionTokens": 27,
+        "ms": 807,
+        "correct": true,
+        "answer": "Operational state is stored in plain Postgres tables, while time-series telemetry data is stored in TimescaleDB, a Postgres extension."
+      },
+      "retrieve": {
+        "promptTokens": 311,
+        "completionTokens": 26,
+        "ms": 2943,
+        "searchMs": 27,
+        "retrieved": 5,
+        "correct": true,
+        "answer": "Operational state is stored in plain Postgres tables, while time-series telemetry is stored in TimescaleDB, a Postgres extension."
+      }
+    },
+    {
+      "id": "q13",
+      "question": "Is it safe to cache robot order state in Redis for persistence?",
+      "goldFacts": [
+        "arch-05"
+      ],
+      "retrievedIds": [
+        "arch-05",
+        "data-01",
+        "arch-04",
+        "inc-01",
+        "data-02"
+      ],
+      "recall": 1,
+      "fullRecall": true,
+      "dump": {
+        "promptTokens": 2027,
+        "completionTokens": 42,
+        "ms": 1141,
+        "correct": true,
+        "answer": "No, it is not safe to cache robot order state in Redis for persistence, as anything that must survive a restart goes to Postgres, and Redis is used only for ephemeral locks and rate-limiting."
+      },
+      "retrieve": {
+        "promptTokens": 306,
+        "completionTokens": 37,
+        "ms": 940,
+        "searchMs": 30,
+        "retrieved": 5,
+        "correct": true,
+        "answer": "No, it is not safe to cache robot order state in Redis for persistence, as Redis is used only for ephemeral locks and rate-limiting, not as a source of truth."
+      }
+    },
+    {
+      "id": "q14",
+      "question": "What is the gRPC deadline between fleet-api and path-planner, and what goes wrong if it's not set?",
+      "goldFacts": [
+        "gotcha-04"
+      ],
+      "retrievedIds": [
+        "gotcha-04",
+        "deps-01",
+        "adr-01",
+        "adr-04",
+        "arch-02"
+      ],
+      "recall": 1,
+      "fullRecall": true,
+      "dump": {
+        "promptTokens": 2037,
+        "completionTokens": 36,
+        "ms": 960,
+        "correct": true,
+        "answer": "The gRPC deadline between fleet-api and path-planner is 250ms. If the deadline is not set, a slow plan can pile up requests and exhaust the connection pool."
+      },
+      "retrieve": {
+        "promptTokens": 307,
+        "completionTokens": 34,
+        "ms": 787,
+        "searchMs": 18,
+        "retrieved": 5,
+        "correct": true,
+        "answer": "The gRPC deadline between fleet-api and path-planner is 250ms. If it's not set, a slow plan can pile up requests and exhaust the connection pool."
+      }
+    },
+    {
+      "id": "q15",
+      "question": "How long is raw telemetry retained, and who owns the downsampling?",
+      "goldFacts": [
+        "data-03"
+      ],
+      "retrievedIds": [
+        "data-03",
+        "adr-02",
+        "people-02",
+        "arch-04",
+        "inc-02"
+      ],
+      "recall": 1,
+      "fullRecall": true,
+      "dump": {
+        "promptTokens": 2028,
+        "completionTokens": 21,
+        "ms": 750,
+        "correct": true,
+        "answer": "Raw telemetry is retained for 14 days, and the downsampling is owned by Dev Okafor."
+      },
+      "retrieve": {
+        "promptTokens": 309,
+        "completionTokens": 21,
+        "ms": 1125,
+        "searchMs": 25,
+        "retrieved": 5,
+        "correct": true,
+        "answer": "Raw telemetry is retained for 14 days, and the downsampling is owned by Dev Okafor."
+      }
+    }
+  ]
+}
