@@ -3,7 +3,7 @@
 # Optimized for Next.js standalone output
 # ============================================
 
-FROM node:20-alpine AS base
+FROM node:26-alpine AS base
 RUN apk add --no-cache libc6-compat wget curl
 WORKDIR /app
 
@@ -73,7 +73,7 @@ RUN npx next build
 # ============================================
 # Production stage
 # ============================================
-FROM node:20-alpine AS production
+FROM node:26-alpine AS production
 
 # Security: run as non-root user
 RUN addgroup --system --gid 1001 nodejs && \
