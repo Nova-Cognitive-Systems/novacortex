@@ -44,7 +44,7 @@
     "helmet": "^7.1.0",
     "hono": "^4.12.9",
     "jsonwebtoken": "^9.0.3",
-    "pdf-parse": "1.1.1",
+    "pdf-parse": "2.4.5",
     "stripe": "^21.0.1",
     "swagger-ui-express": "^5.0.1",
     "zod": "^3.22.0"
