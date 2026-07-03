@@ -19,6 +19,11 @@ NovaCortex gives your agents a persistent, queryable memory:
   via a Qdrant vector index (with transparent substring fallback when embeddings are off).
 - **Relation graph** — typed edges (causes, supports, contradicts, supersedes, …); your
   agent asserts causal/typed links, NovaCortex stores and serves the graph.
+- **Memory intelligence (opt-in)** — with any OpenAI-compatible LLM configured
+  (`LLM_MODEL`, incl. fully-local Ollama), NovaCortex distills conversations into
+  discrete memories (`/memories/ingest`, MCP `memory_ingest`) and resolves conflicts
+  **append-only**: superseded facts get typed `supersedes` edges + an `invalidatedAt`
+  stamp instead of being deleted — history stays queryable and auditable.
 - **Knowledge base** — drop in documents, get auto-generated semantic memories.
 - **Namespaces** — isolate memory per agent/project.
 - **Portable (PMF)** — export/import the whole graph as JSON, binary MessagePack
@@ -54,7 +59,7 @@ cd novacortex
 
 # 3. Start the stack (pulls pinned multi-arch images from GHCR)
 docker compose up -d
-#    with local embeddings: docker compose --profile local-embeddings up -d
+#    with local embeddings: docker compose --profile local-ai up -d
 
 # 4. Grab the one-time bootstrap code from the logs
 docker logs novacortex-api 2>&1 | grep -A1 "Bootstrap code"
@@ -72,8 +77,8 @@ NovaCortex stores and serves all memory data **on your own infrastructure**. Sem
 search activates in one of two ways:
 
 - **Fully local (recommended for the privacy-first path):** start the stack with the
-  `local-embeddings` compose profile (`./scripts/gen-env.sh --local-embeddings`, then
-  `docker compose --profile local-embeddings up -d`). An Ollama sidecar computes
+  `local-ai` compose profile (`./scripts/gen-env.sh --local-embeddings`, then
+  `docker compose --profile local-ai up -d`). An Ollama sidecar computes
   embeddings on your host — no memory text ever leaves your infrastructure.
 - **Hosted:** set `OPENAI_API_KEY`, at which point memory text is sent to OpenAI (or any
   OpenAI-compatible server you point `OPENAI_BASE_URL` at) to compute embeddings.
@@ -87,8 +92,31 @@ degrade is visible. A mismatch between the embedding model's dimension and
 
 `.mcp.json` in this repo registers the MCP server for Claude Code / Cursor. Point its
 `SURREALDB_*` / `QDRANT_*` env at the same store your deployment uses so memory is shared
-across MCP, the REST API, and the Web UI. Tools: `memory_store`, `memory_search`,
-`memory_recall`, `memory_relate`, `memory_status`, `memory_wakeup`, `session_*`.
+across MCP, the REST API, and the Web UI.
+
+```jsonc
+// Claude Desktop / Cursor / Claude Code (.mcp.json)
+{
+  "mcpServers": {
+    "novacortex": {
+      "command": "node",
+      "args": ["<repo>/packages/mcp-server/dist/index.js"], // npx @novacortex/mcp once published
+      "env": {
+        "SURREALDB_URL": "http://localhost:8000/rpc",
+        "SURREALDB_NAMESPACE": "novacortex", "SURREALDB_DATABASE": "production",
+        "SURREALDB_USER": "root", "SURREALDB_PASS": "<your pass>",
+        "QDRANT_URL": "http://localhost:6333",
+        "OPENAI_API_KEY": "…", "LLM_MODEL": "…" // optional: semantic search + intelligence
+      }
+    }
+  }
+}
+```
+
+Tools: `memory_store`, `memory_search` (hybrid + `explain` traces), `memory_recall`,
+`memory_relate`, `memory_update`, `memory_ingest` (LLM fact extraction), `memory_current`
+(supersedes-chain resolution), `memory_status`, `memory_wakeup` (progressive disclosure:
+`depth: "index"` = ~150-token index, drill down on demand), `session_*`.
 
 ## SDKs
 
@@ -122,7 +150,7 @@ Full developer/deploy docs live in [`docs/novacortex-docs`](./docs/novacortex-do
 ## Deployment variants
 
 - **`docker-compose.yml`** — supported self-host path for any Docker host. Pulls pinned
-  GHCR images, secure-by-default, optional `local-embeddings` profile (Ollama sidecar).
+  GHCR images, secure-by-default, optional `local-ai` profile (Ollama sidecar for embeddings + intelligence).
 - **`docker-compose.unraid.yml`** — the same stack with Unraid appdata defaults.
 - **`docker-compose.dev.yml`** — local development (builds from source, hot-reload).
 - **`docker-compose.traefik.yml`** — ⚠️ experimental Traefik/Let's-Encrypt variant, **not**

@@ -15,6 +15,16 @@ export {
   EmbeddingService,
   type EmbeddingServiceConfig,
 } from './services/embedding-service.js';
+export { LLMService, type LLMServiceConfig } from './services/llm-service.js';
+export { RerankService, type RerankServiceConfig } from './services/rerank-service.js';
+export { buildSparseVector, tokenizeForSparse, type SparseVector } from './lib/sparse-text.js';
+export { parseTemporalQuery, type ParsedTemporal } from './lib/temporal-parse.js';
+export {
+  IntelligenceService,
+  type IngestOptions,
+  type IngestResult,
+  type ResolveOptions,
+} from './services/intelligence-service.js';
 
 // Connection management
 export {
@@ -40,4 +50,5 @@ export {
   resolveSurrealConfig,
   resolveQdrantConfig,
   resolveEmbeddingConfig,
+  resolveLLMConfig,
 } from './lib/env-config.js';

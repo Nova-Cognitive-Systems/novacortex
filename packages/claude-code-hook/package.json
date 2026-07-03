@@ -1,0 +1,26 @@
+{
+  "name": "@novacortex/claude-code-hook",
+  "version": "1.2.1",
+  "description": "Claude Code lifecycle hook that captures your coding sessions into NovaCortex memory (LLM fact extraction, append-only conflict resolution)",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Nova-Cognitive-Systems/novacortex.git",
+    "directory": "packages/claude-code-hook"
+  },
+  "keywords": ["claude-code", "hooks", "memory", "ai-agents", "self-hosted"],
+  "bin": {
+    "novacortex-hook": "./bin/novacortex-hook.js"
+  },
+  "files": ["dist", "bin", "README.md"],
+  "scripts": {
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  }
+}

@@ -36,6 +36,7 @@ interface SurrealMemoryRecord {
   createdAt: string | DateTime;
   accessedAt: string | DateTime;
   version: number;
+  invalidatedAt?: string | DateTime | null;
   metadata: {
     source: {
       type: string;
@@ -169,6 +170,7 @@ export class SurrealDBAdapter {
       createdAt: this.toDate(record.createdAt),
       accessedAt: this.toDate(record.accessedAt),
       version: record.version,
+      ...(record.invalidatedAt ? { invalidatedAt: this.toDate(record.invalidatedAt) } : {}),
       metadata: {
         source: {
           type: record.metadata.source.type as
@@ -463,6 +465,10 @@ export class SurrealDBAdapter {
       }));
     }
 
+    if (input.invalidatedAt !== undefined) {
+      updates['invalidatedAt'] = input.invalidatedAt ? new DateTime(input.invalidatedAt) : null;
+    }
+
     if (input.salience !== undefined) {
       updates['metadata.salience'] = input.salience;
       updates['metadata.lastDecayCalculation'] = new DateTime(now);
@@ -543,6 +549,16 @@ export class SurrealDBAdapter {
     if (options.createdAfter) {
       conditions.push('createdAt >= $createdAfter');
       params['createdAfter'] = new DateTime(options.createdAfter);
+    }
+    if (options.asOf) {
+      // Point-in-time: rows that existed AND were still current at `asOf`.
+      conditions.push('createdAt <= $asOf');
+      conditions.push('(invalidatedAt = NONE OR invalidatedAt = NULL OR invalidatedAt > $asOf)');
+      params['asOf'] = new DateTime(options.asOf);
+    } else if (!options.includeInvalidated) {
+      // Default: only CURRENT facts — superseded memories stay stored (append-
+      // only) but no longer surface in search.
+      conditions.push('(invalidatedAt = NONE OR invalidatedAt = NULL)');
     }
 
     return { whereClause: conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '', params };

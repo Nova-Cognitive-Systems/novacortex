@@ -51,6 +51,17 @@ export const MemorySearchSchema = z.object({
   minSalience: z.number().min(0).max(10).optional().describe('Minimum salience score'),
   embedding: z.array(z.number()).optional().describe('Query embedding for semantic search'),
   scoreThreshold: z.number().min(0).max(1).optional().describe('Minimum similarity score'),
+  includeInvalidated: z.boolean().default(false).describe('Also return superseded/invalidated facts (default: current facts only)'),
+  explain: z.boolean().default(false).describe('Attach a per-result recall trace explaining WHY each memory ranked where it did'),
+});
+
+export const MemoryUpdateSchema = z.object({
+  id: z.string().describe('Memory ID to update'),
+  namespace: z.string().default('default').describe('Namespace of the memory'),
+  content: z.string().optional().describe('New content (re-embedded automatically when embeddings are configured)'),
+  tags: z.array(z.string()).optional().describe('Replace tags'),
+  entities: z.array(EntitySchema).optional().describe('Replace entities'),
+  salience: z.number().min(0).max(10).optional().describe('New importance score'),
 });
 
 export const MemoryRecallSchema = z.object({
@@ -118,6 +129,33 @@ export const MemoryStatusSchema = z.object({
 export const MemoryWakeupSchema = z.object({
   namespace: z.string().default('default').describe('Namespace to wake up for'),
   query: z.string().optional().describe('Optional topic query to pre-load relevant L2 context'),
+  depth: z
+    .enum(['index', 'full'])
+    .default('full')
+    .describe(
+      "Progressive disclosure: 'index' returns a ~150-token one-line-per-memory index (drill down with memory_recall/memory_search); 'full' returns contents within a ~900-token budget"
+    ),
+});
+
+export const IngestMessageSchema = z.object({
+  role: z.enum(['user', 'assistant', 'system', 'tool']).describe('Speaker role'),
+  content: z.string().describe('Message text'),
+  name: z.string().optional().describe('Optional speaker name'),
+  timestamp: z.string().optional().describe('Optional ISO timestamp of the turn'),
+});
+
+export const MemoryCurrentSchema = z.object({
+  id: z.string().describe('Memory ID to resolve to its current version'),
+  namespace: z.string().default('default').describe('Namespace of the memory'),
+});
+
+export const MemoryIngestSchema = z.object({
+  messages: z.array(IngestMessageSchema).describe('Conversation turns to distill into memories'),
+  namespace: z.string().default('default').describe('Namespace to store extracted memories in'),
+  sessionId: z.string().optional().describe('Session/conversation identifier for provenance'),
+  agentId: z.string().optional().describe('Agent identifier for provenance'),
+  dryRun: z.boolean().default(false).describe('Extract facts only — preview without storing'),
+  resolve: z.boolean().default(true).describe('Resolve stored facts against neighbors (typed edges, supersession)'),
 });
 
 // Type exports
@@ -133,3 +171,6 @@ export type SessionGetContextInput = z.infer<typeof SessionGetContextSchema>;
 export type SessionEndInput = z.infer<typeof SessionEndSchema>;
 export type MemoryStatusInput = z.infer<typeof MemoryStatusSchema>;
 export type MemoryWakeupInput = z.infer<typeof MemoryWakeupSchema>;
+export type MemoryIngestInput = z.infer<typeof MemoryIngestSchema>;
+export type MemoryCurrentInput = z.infer<typeof MemoryCurrentSchema>;
+export type MemoryUpdateInput = z.infer<typeof MemoryUpdateSchema>;

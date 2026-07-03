@@ -18,6 +18,8 @@ import { SurrealDBAdapter, type SurrealDBConfig } from '../adapters/surrealdb.js
 import { QdrantAdapter, type QdrantConfig } from '../adapters/qdrant.js';
 import { ConnectionManager, ConnectionState } from '../lib/connection-manager.js';
 import { EmbeddingService, type EmbeddingServiceConfig } from './embedding-service.js';
+import { RerankService, type RerankServiceConfig } from './rerank-service.js';
+import { parseTemporalQuery } from '../lib/temporal-parse.js';
 import { createHash } from 'crypto';
 
 export interface MemoryServiceConfig {
@@ -33,6 +35,11 @@ export interface MemoryServiceConfig {
    * transparently falling back to substring search when embeddings are disabled.
    */
   embedding?: EmbeddingServiceConfig;
+  /**
+   * Optional cross-encoder rerank endpoint (TEI-compatible /rerank). When
+   * configured, text-query searches over-fetch and rerank the page.
+   */
+  rerank?: RerankServiceConfig;
 }
 
 export interface ServiceHealth {
@@ -50,11 +57,13 @@ export class MemoryService {
   private qdrantManager: ConnectionManager;
   private lastHealthCheck: Date | null = null;
   private embeddingService: EmbeddingService;
+  private rerankService: RerankService;
 
   constructor(config: MemoryServiceConfig) {
     this.surrealdb = new SurrealDBAdapter(config.surrealdb);
     this.qdrant = new QdrantAdapter(config.qdrant);
     this.embeddingService = new EmbeddingService(config.embedding ?? {});
+    this.rerankService = new RerankService(config.rerank ?? {});
 
     // Setup connection manager for SurrealDB
     this.surrealdbManager = new ConnectionManager(
@@ -206,6 +215,13 @@ export class MemoryService {
     return memory;
   }
 
+  /** Exact-duplicate lookup by content (SHA-256 hash, per namespace). */
+  async findByContent(content: string, namespace: string): Promise<Memory | null> {
+    await this.ensureConnected();
+    const hash = createHash('sha256').update(content).digest('hex');
+    return this.surrealdb.findByHash(hash, namespace);
+  }
+
   async getMemory(id: MemoryId, includeRelations = false): Promise<Memory | null> {
     await this.ensureConnected();
 
@@ -246,9 +262,59 @@ export class MemoryService {
     // If memory has embedding, update in Qdrant
     if (updated.embedding && updated.embedding.length > 0) {
       await this.qdrant.upsert(updated);
+    } else if (input.invalidatedAt !== undefined) {
+      // Mirror the invalidation marker into the vector payload so the default
+      // search filter applies at the index level (best-effort; SurrealDB stays
+      // the source of truth and reads re-filter after enrichment).
+      await this.qdrant.setInvalidated(id, input.invalidatedAt ?? null).catch(() => {});
     }
 
     return updated;
+  }
+
+  /**
+   * Walk the supersedes chain from a memory to its CURRENT tip: if this fact
+   * was superseded (possibly repeatedly), return the newest version, plus the
+   * chain walked. Deterministic, zero LLM. Cycle-safe.
+   */
+  async getCurrentFact(id: MemoryId): Promise<{
+    current: Memory;
+    superseded: boolean;
+    chain: Memory[];
+  } | null> {
+    await this.ensureConnected();
+
+    const start = await this.surrealdb.findById(id);
+    if (!start) return null;
+
+    const chain: Memory[] = [start];
+    const visited = new Set<string>([`${id.namespace}:${id.id}`]);
+    let current = start;
+
+    for (let hops = 0; hops < 50; hops++) {
+      const relations = await this.surrealdb.findRelations(current.id);
+      // Incoming supersedes edge: fromMemory is the successor of current.
+      const successors = relations.filter(
+        (r) =>
+          r.relationType === ('supersedes' as RelationType) &&
+          r.toMemory.id === current.id.id &&
+          r.toMemory.namespace === current.id.namespace
+      );
+      if (successors.length === 0) break;
+
+      // Multiple successors (rare): follow the newest edge.
+      const next = successors.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0]!;
+      const key = `${next.fromMemory.namespace}:${next.fromMemory.id}`;
+      if (visited.has(key)) break; // cycle guard
+      visited.add(key);
+
+      const nextMemory = await this.surrealdb.findById(next.fromMemory);
+      if (!nextMemory) break;
+      chain.push(nextMemory);
+      current = nextMemory;
+    }
+
+    return { current, superseded: chain.length > 1, chain };
   }
 
   async deleteMemory(id: MemoryId): Promise<boolean> {
@@ -290,7 +356,14 @@ export class MemoryService {
     const PAGE = 1000;
     const out: Memory[] = [];
     for (let offset = 0; ; offset += PAGE) {
-      const batch = await this.surrealdb.search({ ...options, limit: PAGE, offset });
+      // Exports must NEVER drop history: include invalidated (superseded)
+      // memories regardless of the read-path default.
+      const batch = await this.surrealdb.search({
+        ...options,
+        includeInvalidated: true,
+        limit: PAGE,
+        offset,
+      });
       out.push(...batch);
       if (batch.length < PAGE) break;
     }
@@ -347,49 +420,107 @@ export class MemoryService {
   }
 
   /**
-   * Semantic text search: embeds the query and runs a vector search when
-   * embeddings are enabled, otherwise transparently falls back to substring
-   * search. This is the path the REST API, MCP server and CLI should use for a
-   * plain text query so that the headline "semantic search" actually works
-   * end-to-end without the caller needing to pre-compute an embedding vector.
+   * Text search — the headline retrieval path used by REST/MCP/CLI/SDKs.
+   * With embeddings configured it runs HYBRID retrieval (dense semantic +
+   * sparse BM25-style lexical, fused server-side with RRF) when the collection
+   * supports it, plain semantic vector search otherwise, and transparently
+   * falls back to substring search when embeddings are disabled. An optional
+   * cross-encoder rerank stage refines the final page.
    *
-   * The returned `mode` tells callers which path was taken (useful for clients
-   * that want to surface "semantic" vs "text" results).
+   * The returned `mode` tells callers which path was taken.
    */
   async searchByText(
     query: string,
     options: Omit<VectorSearchOptions, 'vector'> = {}
-  ): Promise<{ results: SearchResult[]; mode: 'semantic' | 'text' }> {
+  ): Promise<{ results: SearchResult[]; mode: 'hybrid' | 'semantic' | 'text' }> {
     await this.ensureConnected();
 
-    if (this.embeddingService.isEnabled() && query.trim().length > 0) {
-      const vector = await this.embeddingService.embed(query);
+    let effOptions: Omit<VectorSearchOptions, 'vector'> = { ...options };
+    let effQuery = query;
+
+    // Deterministic temporal normalization (opt-in): "last week", "3 days ago"
+    // → createdAfter filter. Explicit temporal options always win.
+    if (options.parseTemporal && !options.createdAfter && !options.asOf) {
+      const parsed = parseTemporalQuery(query);
+      if (parsed.createdAfter) {
+        effOptions = { ...effOptions, createdAfter: parsed.createdAfter };
+        effQuery = parsed.cleaned;
+      }
+    }
+
+    if (this.embeddingService.isEnabled() && effQuery.trim().length > 0) {
+      const vector = await this.embeddingService.embed(effQuery);
       if (vector) {
-        const results = await this.vectorSearch({ ...options, vector });
-        return { results, mode: 'semantic' };
+        const baseLimit = effOptions.limit ?? 10;
+        // Reranking needs a candidate pool beyond the final page; only
+        // meaningful on the first page.
+        const wantRerank =
+          this.rerankService.isEnabled() &&
+          effOptions.rerank !== false &&
+          (effOptions.offset ?? 0) === 0;
+        const searchOptions: VectorSearchOptions = {
+          ...effOptions,
+          vector,
+          ...(wantRerank ? { limit: Math.min(Math.max(baseLimit * 5, 20), 50) } : {}),
+        };
+
+        const window = this.prepareSearchWindow(searchOptions);
+        const { results: raw, hybrid } = await this.qdrant.hybridSearch(effQuery, window.qOptions);
+        let results = await this.finalizeVectorResults(raw, searchOptions, window);
+        if (wantRerank) {
+          results = await this.applyRerank(effQuery, results, baseLimit, !!effOptions.explain);
+        }
+        if (effOptions.explain) {
+          const modeLabel = hybrid ? 'hybrid (dense + BM25, RRF fusion)' : 'semantic (dense vectors)';
+          for (const r of results) r.trace?.unshift(`retrieved via ${modeLabel}`);
+        }
+        return { results, mode: hybrid ? 'hybrid' : 'semantic' };
       }
     }
 
     // Fallback: substring search via SurrealDB.
-    const memories = await this.surrealdb.search({ ...options, query });
+    const memories = await this.surrealdb.search({ ...effOptions, query: effQuery });
     return { results: memories.map((memory) => ({ memory })), mode: 'text' };
   }
 
   async vectorSearch(options: VectorSearchOptions): Promise<SearchResult[]> {
     await this.ensureConnected();
+    const window = this.prepareSearchWindow(options);
+    const vectorResults = await this.qdrant.search(window.qOptions);
+    return this.finalizeVectorResults(vectorResults, options, window);
+  }
 
-    const recencyWeight = options.recencyWeight && options.recencyWeight > 0 ? Math.min(1, options.recencyWeight) : 0;
+  /**
+   * Over-fetch a candidate pool from offset 0 whenever ranking/filtering
+   * happens after enrichment (recency re-ranking, asOf/createdAfter windows,
+   * graph boost — none of which the index can apply); otherwise let Qdrant
+   * apply limit/offset directly.
+   */
+  private prepareSearchWindow(options: VectorSearchOptions): {
+    qOptions: VectorSearchOptions;
+    postProcess: boolean;
+    recencyWeight: number;
+    limit: number;
+    offset: number;
+  } {
+    const recencyWeight =
+      options.recencyWeight && options.recencyWeight > 0 ? Math.min(1, options.recencyWeight) : 0;
     const limit = options.limit ?? 10;
     const offset = options.offset ?? 0;
-
-    // With recency weighting, over-fetch a candidate pool from offset 0 so recency
-    // can pull in items that pure relevance ranked just outside the page, then
-    // re-rank and page in JS. Otherwise let Qdrant apply limit/offset directly.
-    const qOptions: VectorSearchOptions = recencyWeight > 0
+    const postProcess =
+      recencyWeight > 0 || !!options.asOf || !!options.createdAfter || !!options.graphBoost;
+    const qOptions: VectorSearchOptions = postProcess
       ? { ...options, offset: 0, limit: Math.max((offset + limit) * 4, 20) }
       : options;
-    const vectorResults = await this.qdrant.search(qOptions);
+    return { qOptions, postProcess, recencyWeight, limit, offset };
+  }
 
+  /** Enrich raw index hits from SurrealDB truth, filter, re-rank, paginate. */
+  private async finalizeVectorResults(
+    vectorResults: SearchResult[],
+    options: VectorSearchOptions,
+    window: { postProcess: boolean; recencyWeight: number; limit: number; offset: number }
+  ): Promise<SearchResult[]> {
     if (vectorResults.length === 0) {
       return [];
     }
@@ -411,24 +542,82 @@ export class MemoryService {
       const key = `${result.memory.id.namespace}:${result.memory.id.id}`;
       const full = memoryMap.get(key);
       if (!full) continue; // orphaned vector — skip
-      enrichedResults.push({ memory: full, score: result.score });
+      enrichedResults.push({
+        memory: full,
+        score: result.score,
+        ...(options.explain
+          ? {
+              trace: [
+                `index match ${(result.score ?? 0).toFixed(3)}`,
+                `salience ${full.metadata.effectiveSalience.toFixed(1)} (base ${full.metadata.salience})`,
+                ...(full.invalidatedAt
+                  ? [`superseded ${full.invalidatedAt.toISOString().slice(0, 10)} — history result`]
+                  : []),
+              ],
+            }
+          : {}),
+      });
+    }
+
+    // Temporal filtering on SurrealDB truth (the Qdrant payload flag may be
+    // stale for points written before the mirror existed): default excludes
+    // invalidated facts; asOf reconstructs what was believed at that instant.
+    if (options.asOf) {
+      const asOfMs = options.asOf.getTime();
+      enrichedResults = enrichedResults.filter(
+        (r) =>
+          r.memory.createdAt.getTime() <= asOfMs &&
+          (!r.memory.invalidatedAt || r.memory.invalidatedAt.getTime() > asOfMs)
+      );
+    } else if (!options.includeInvalidated) {
+      enrichedResults = enrichedResults.filter((r) => !r.memory.invalidatedAt);
+    }
+    if (options.createdAfter) {
+      const afterMs = options.createdAfter.getTime();
+      enrichedResults = enrichedResults.filter((r) => r.memory.createdAt.getTime() >= afterMs);
+    }
+
+    // Optional LLM-free graph boost: hubs in the typed relation graph rank
+    // slightly higher (log-scaled edge degree, capped) — cheap because the
+    // relation table is indexed by endpoint.
+    if (options.graphBoost && enrichedResults.length > 0) {
+      const degrees = await Promise.all(
+        enrichedResults.map((r) =>
+          this.surrealdb.findRelations(r.memory.id).then((rels) => rels.length).catch(() => 0)
+        )
+      );
+      enrichedResults.forEach((r, i) => {
+        const boost = 1 + 0.08 * Math.log2(1 + Math.min(degrees[i]!, 8));
+        r.score = (r.score ?? 0) * boost;
+        if (options.explain && degrees[i]! > 0) {
+          r.trace?.push(`graph boost ×${boost.toFixed(2)} (${degrees[i]} typed edges)`);
+        }
+      });
+      enrichedResults.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
     }
 
     // Optional recency weighting: blend an ABSOLUTE recency score (exponential
     // decay, 30-day half-life — stable across requests/pages) with the relevance
     // score (clamped to 0..1) and re-rank, then page in JS. This lets the current
     // fact outrank an older, equally-similar one without breaking pagination.
-    if (recencyWeight > 0) {
+    if (window.recencyWeight > 0) {
       const now = Date.now();
       const HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000;
       for (const r of enrichedResults) {
         const ageMs = Math.max(0, now - r.memory.createdAt.getTime());
         const recency = Math.pow(0.5, ageMs / HALF_LIFE_MS);
         const relevance = Math.max(0, Math.min(1, r.score ?? 0));
-        r.score = relevance * (1 - recencyWeight) + recency * recencyWeight;
+        r.score = relevance * (1 - window.recencyWeight) + recency * window.recencyWeight;
+        if (options.explain) {
+          r.trace?.push(
+            `recency blend w=${window.recencyWeight}: relevance ${relevance.toFixed(3)} + recency ${recency.toFixed(3)} → ${r.score.toFixed(3)}`
+          );
+        }
       }
       enrichedResults.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-      enrichedResults = enrichedResults.slice(offset, offset + limit);
+    }
+    if (window.postProcess) {
+      enrichedResults = enrichedResults.slice(window.offset, window.offset + window.limit);
     }
 
     // Optional relation hydration so callers can detect conflicts/supersessions
@@ -442,6 +631,48 @@ export class MemoryService {
     }
 
     return enrichedResults;
+  }
+
+  /** Cross-encoder rerank of the candidate pool; degrades to input order. */
+  private async applyRerank(
+    query: string,
+    results: SearchResult[],
+    limit: number,
+    explain = false
+  ): Promise<SearchResult[]> {
+    if (results.length <= 1) return results.slice(0, limit);
+    const scores = await this.rerankService.rerank(
+      query,
+      results.map((r) => r.memory.content)
+    );
+    if (!scores) return results.slice(0, limit);
+    return results
+      .map((r, i) => ({
+        ...r,
+        score: scores[i] ?? 0,
+        ...(explain ? { trace: [...(r.trace ?? []), `cross-encoder rerank ${(scores[i] ?? 0).toFixed(3)}`] } : {}),
+      }))
+      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+      .slice(0, limit);
+  }
+
+  /** The shared rerank service (diagnostics). */
+  getRerankService(): RerankService {
+    return this.rerankService;
+  }
+
+  /**
+   * One-time migration to hybrid search for collections created before the
+   * sparse lexical leg existed. See QdrantAdapter.migrateToSparse.
+   */
+  async migrateToHybrid(): Promise<{ migrated: number; alreadyHybrid: boolean }> {
+    await this.ensureConnected();
+    return this.qdrant.migrateToSparse();
+  }
+
+  /** Whether the vector collection supports hybrid (dense+sparse) retrieval. */
+  isHybridEnabled(): boolean {
+    return this.qdrant.isSparseEnabled();
   }
 
   async hybridSearch(
@@ -732,6 +963,34 @@ export class MemoryService {
     });
   }
 
+  /**
+   * PMF v1.1 checksum payload — extends the v1.1.x formula with the per-memory
+   * `invalidated` timestamp so append-only supersession history is integrity-
+   * covered ("provable memory"). The older formulas stay accepted on import.
+   */
+  private pmfChecksumPayloadV13(
+    memories: ReadonlyArray<PMFMemoryEntry>,
+    relations: ReadonlyArray<PMFRelationEntry>
+  ): string {
+    return JSON.stringify({
+      memories: memories
+        .map((m) => {
+          const md = m.metadata;
+          const meta = md
+            ? `${md.confidence},${md.salience},${md.decayRate},${[...md.tags].sort().join(',')}`
+            : '';
+          const emb = m.embedding && m.embedding.length > 0
+            ? createHash('sha256').update(JSON.stringify(m.embedding)).digest('hex')
+            : '';
+          return `${m.contentHash}|${m.memoryType}|${meta}|${emb}|${m.invalidated ?? ''}`;
+        })
+        .sort(),
+      relations: relations
+        .map((r) => `${r.fromNs}:${r.from}->${r.toNs}:${r.to}:${r.type}:${r.strength}:${r.bidirectional}`)
+        .sort(),
+    });
+  }
+
   /** The v1.1.0 (narrow, identity-only) checksum payload — kept for import compat. */
   private pmfChecksumPayloadV110(
     memories: ReadonlyArray<{ contentHash: string }>,
@@ -774,6 +1033,7 @@ export class MemoryService {
       created: m.createdAt.toISOString(),
       accessed: m.accessedAt.toISOString(),
       version: m.version,
+      ...(m.invalidatedAt ? { invalidated: m.invalidatedAt.toISOString() } : {}),
       metadata: {
         confidence: m.metadata.confidence,
         salience: m.metadata.salience,
@@ -809,8 +1069,9 @@ export class MemoryService {
       .update(sortedHashes.join(''))
       .digest('hex');
 
-    // Create full payload checksum (canonical, binary-round-trip-safe)
-    const payload = this.pmfChecksumPayload(pmfMemories, pmfRelations);
+    // Create full payload checksum (canonical, binary-round-trip-safe,
+    // v1.1: covers the invalidation history)
+    const payload = this.pmfChecksumPayloadV13(pmfMemories, pmfRelations);
     const checksum = this.crc32(payload).toString(16).padStart(8, '0');
 
     // Detect embedding dimension
@@ -819,7 +1080,7 @@ export class MemoryService {
     return {
       header: {
         magic: 'NCPMF',
-        version: '1.0',
+        version: '1.1',
         created: new Date(),
         source: {
           namespace,
@@ -870,10 +1131,12 @@ export class MemoryService {
       return { imported: 0, skipped: 0, relationsImported: 0, importedIds: [], errors: ['Integrity check failed: Merkle root mismatch'] };
     }
 
-    // Verify checksum. Accept the current canonical checksum, the v1.1.0 narrow
-    // canonical one, or the v1.0.x JSON.stringify one — all for backward compat.
+    // Verify checksum. Accept the current v1.1 canonical checksum plus all
+    // historical formulas (v1.1.x broad, v1.1.0 narrow, v1.0.x JSON.stringify)
+    // for backward compat.
     const crc = (s: string) => this.crc32(s).toString(16).padStart(8, '0');
     const candidates = [
+      crc(this.pmfChecksumPayloadV13(pmf.memories, pmf.relations)),
       crc(this.pmfChecksumPayload(pmf.memories, pmf.relations)),
       crc(this.pmfChecksumPayloadV110(pmf.memories, pmf.relations)),
       crc(JSON.stringify({ memories: pmf.memories, relations: pmf.relations })),
@@ -940,6 +1203,11 @@ export class MemoryService {
           decayRate: entry.metadata.decayRate,
           embedding: entry.embedding ? [...entry.embedding] : undefined,
         });
+
+        // PMF v1.1: restore the append-only supersession marker.
+        if (entry.invalidated) {
+          await this.updateMemory(created.id, { invalidatedAt: new Date(entry.invalidated) });
+        }
 
         idMap.set(key(entry.namespace, entry.id), created.id);
         importedIds.push(created.id);

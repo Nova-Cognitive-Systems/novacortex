@@ -5,13 +5,85 @@ All notable changes to NovaCortex are documented here. Format based on
 
 ## [Unreleased]
 
-Foundation for v1.3 "Intelligence" (Phase A).
+v1.3 "Intelligence": the LLM-driven memory intelligence layer (opt-in, local-first)
+plus its foundation.
 
 ### Added
-- **Local-embeddings compose profile**: `docker compose --profile local-embeddings up -d`
-  starts an Ollama sidecar (default model `nomic-embed-text`) so semantic search runs
+- **Memory intelligence layer** (opt-in via `LLM_MODEL`; works with any
+  OpenAI-compatible endpoint including fully-local Ollama — `LLM_API_KEY`/`LLM_BASE_URL`
+  fall back to the `OPENAI_*` pair):
+  - **Fact extraction**: `POST /memories/ingest {messages[]}` distills conversation
+    turns into discrete, self-contained memories with populated `memoryType`, `tags`,
+    `entities`, `salience` and `confidence`. Async by default (202 + job status at
+    `GET /memories/ingest/:jobId`) so writes never pay LLM latency; `wait=true` runs
+    synchronously, `dryRun=true` previews the facts without storing.
+  - **Update resolution, append-only ("provable memory")**: each new memory is judged
+    against its nearest neighbors (one small LLM decision per pair — designed for
+    small local models). Outcomes become TYPED EDGES: `supersedes` (+ an
+    `invalidatedAt` stamp on the outdated fact), `contradicts`, `same_as`, or
+    `related_to`. **Nothing is deleted or rewritten** — history stays queryable.
+  - **MCP `memory_ingest` tool** with the same pipeline; MCP `session_end` now uses
+    real LLM extraction (with the legacy length heuristic as fallback when no LLM is
+    configured).
+  - `/health` reports the intelligence status (`enabled`, `model`).
+- **`invalidatedAt`** on memories: append-only supersession marker, settable via the
+  update API; groundwork for point-in-time queries and read-path suppression.
+- **Temporal read path** — the payoff of append-only resolution:
+  - Default search (text and vector) now returns only **current** facts; superseded
+    memories are filtered at the index level (Qdrant payload flag + SurrealDB truth).
+    Opt out with `includeInvalidated: true`.
+  - **Point-in-time queries**: `asOf` (ISO 8601) reconstructs what the store believed
+    at that instant — created before `asOf` and not yet invalidated then.
+  - **`GET /memories/:ns/:id/current`** + MCP tool **`memory_current`**: walk the
+    supersedes chain from any (possibly outdated) memory to its newest version,
+    returning the full chain. Deterministic, zero LLM at read time.
+  - MCP `memory_search` marks superseded results with a `resolve via memory_current`
+    hint when `includeInvalidated` is used.
+  - Exports, `/stats`, and namespace deletion always see the full history (invalidated
+    rows are never silently dropped).
+- **PMF v1.1** (RFC PMF-001 updated): memory entries carry the optional `invalidated`
+  timestamp; the canonical checksum now covers it; import restores the marker. Old
+  v1.0 files remain importable (all historical checksum formulas accepted).
+- **Hybrid retrieval (dense + BM25, server-side RRF fusion)**: text search now runs a
+  semantic leg AND a lexical leg (BM25-style sparse vectors, IDF computed by Qdrant
+  per deployment corpus — fully deterministic, no extra model) fused with Reciprocal
+  Rank Fusion. Fixes the classic lexical-mismatch losses (IDs, names, error codes).
+  New collections get it automatically; pre-v1.3 collections run
+  `POST /memories/vectors/migrate-hybrid` once (streaming, constant-memory).
+  `/health` reports `search.hybrid`; search responses report `mode: "hybrid"`.
+- **Optional cross-encoder reranking**: point `RERANK_URL` at any TEI-compatible
+  `/rerank` endpoint (e.g. a local `text-embeddings-inference` sidecar with
+  bge/Qwen3-reranker — the privacy-first path) and text searches over-fetch and
+  rerank the first page. Off by default; per-query opt-out via `rerank: false`.
+- **Graph-aware ranking boost** (`graphBoost: true`): results that are hubs in the
+  typed relation graph rank slightly higher — LLM-free, log-scaled edge degree.
+- **Deterministic temporal query normalization** (`parseTemporal: true`):
+  "yesterday", "last week", "3 days ago" → `createdAfter` filter, no LLM involved.
+- **Progressive-disclosure wakeup**: MCP `memory_wakeup` accepts `depth: "index"` — a
+  ~150-token one-line-per-memory index (`<id-suffix> [<type><salience>] <gist>`) to
+  bootstrap coding-agent sessions cheaply; drill down with `memory_search`/
+  `memory_recall`. Wakeup L2 now uses real (hybrid/semantic) retrieval.
+- **Explainable recall**: search option `explain: true` attaches a per-result `trace`
+  (retrieval mode, index score, salience, graph boost, recency blend, rerank score,
+  supersession state) on REST `/search` and MCP `memory_search` — answers *why was
+  this retrieved*.
+- **MCP `memory_update`** (content/tags/entities/salience) with automatic re-embedding
+  on content changes.
+- **SDK parity**: Python SDK gains `update`, `relate`/`relations`, `current`,
+  `ingest`(+`ingest_status`); JS SDK gains `memories.current`/`ingest`/`ingestStatus`.
+- **`@novacortex/claude-code-hook`**: new package — a Claude Code SessionEnd hook that
+  captures your coding sessions into NovaCortex via `/memories/ingest` (async, no
+  session latency; pairs with `local-ai` for a fully-local pipeline).
+- **`@novacortex/mcp`**: the MCP server is npx-packaged (`novacortex-mcp` bin).
+- **LongMemEval_S benchmark harness** (`scripts/benchmark/longmemeval/`): reproducible
+  two-configuration evaluation (substrate vs intelligence) with fixed reader/judge,
+  per-category metrics, retrieval recall, latency and token reporting.
+- **Local-AI compose profile**: `docker compose --profile local-ai up -d`
+  starts an Ollama sidecar (default `nomic-embed-text`; add `qwen3:8b` for the
+  intelligence layer via `OLLAMA_PULL`) so semantic search AND memory intelligence run
   fully on your own host — no memory text ever leaves your infrastructure.
-  `scripts/gen-env.sh --local-embeddings` preconfigures the required env in one step.
+  `scripts/gen-env.sh --local-embeddings` (search only) or `--local-ai` (search +
+  intelligence) preconfigures the required env in one step.
 - **Embedding dimension guard**: at startup the API probes the embedding endpoint and
   **fails loudly** when the model's vector dimension doesn't match `QDRANT_VECTOR_SIZE`
   (previously every background upsert failed silently). An unreachable endpoint only

@@ -7,6 +7,9 @@ import {
   MemoryService,
   MemoryType,
   RelationType,
+  LLMService,
+  IntelligenceService,
+  resolveLLMConfig,
   type Memory,
   type SearchResult,
   type PortableMemory,
@@ -27,6 +30,9 @@ import {
   SessionEndSchema,
   MemoryStatusSchema,
   MemoryWakeupSchema,
+  MemoryIngestSchema,
+  MemoryCurrentSchema,
+  MemoryUpdateSchema,
   type MemoryStoreInput,
   type MemorySearchInput,
   type MemoryRecallInput,
@@ -39,6 +45,9 @@ import {
   type SessionEndInput,
   type MemoryStatusInput,
   type MemoryWakeupInput,
+  type MemoryIngestInput,
+  type MemoryCurrentInput,
+  type MemoryUpdateInput,
 } from './schemas.js';
 
 // Convert Zod schema to JSON Schema for MCP
@@ -157,10 +166,15 @@ export interface ToolResult {
 export class ToolHandler {
   private memoryService: MemoryService;
   private sessionManager: SessionManager;
+  private intelligence: IntelligenceService;
 
   constructor(memoryService: MemoryService) {
     this.memoryService = memoryService;
-    this.sessionManager = new SessionManager(memoryService);
+    // Intelligence layer: active only when LLM_MODEL (+ key/base URL) is set —
+    // same env contract as the REST API. Without it, memory_ingest reports
+    // unavailable and session_end falls back to the heuristic extraction.
+    this.intelligence = new IntelligenceService(memoryService, new LLMService(resolveLLMConfig()));
+    this.sessionManager = new SessionManager(memoryService, this.intelligence);
   }
 
   getToolDefinitions(): ToolDefinition[] {
@@ -234,6 +248,24 @@ export class ToolHandler {
           'Load tiered memory context for a specific topic. Returns L1 (top salience) + L2 (topic-filtered) memories combined, capped at ~900 tokens total for efficient context injection.',
         inputSchema: zodToJsonSchema(MemoryWakeupSchema),
       },
+      {
+        name: 'memory_ingest',
+        description:
+          'Distill conversation messages into discrete memories automatically (LLM fact extraction + conflict resolution with typed edges). Use instead of memory_store when you have raw conversation turns rather than a curated fact. Requires a configured LLM (LLM_MODEL).',
+        inputSchema: zodToJsonSchema(MemoryIngestSchema),
+      },
+      {
+        name: 'memory_current',
+        description:
+          'Resolve a memory to its CURRENT version by walking the supersedes chain. Use when a recalled fact might be outdated (e.g. it carries an invalidatedAt or a supersedes edge).',
+        inputSchema: zodToJsonSchema(MemoryCurrentSchema),
+      },
+      {
+        name: 'memory_update',
+        description:
+          'Update an existing memory (content, tags, entities, salience). Content changes are re-embedded automatically. Prefer storing a NEW memory + memory_relate(supersedes) when a fact CHANGED — update is for corrections/enrichment of the same fact.',
+        inputSchema: zodToJsonSchema(MemoryUpdateSchema),
+      },
     ];
   }
 
@@ -264,6 +296,12 @@ export class ToolHandler {
           return await this.handleMemoryStatus(args);
         case 'memory_wakeup':
           return await this.handleMemoryWakeup(args);
+        case 'memory_ingest':
+          return await this.handleMemoryIngest(args);
+        case 'memory_current':
+          return await this.handleMemoryCurrent(args);
+        case 'memory_update':
+          return await this.handleMemoryUpdate(args);
         default:
           return this.error(`Unknown tool: ${name}`);
       }
@@ -320,6 +358,8 @@ export class ToolHandler {
         limit: input.limit,
         minSalience: input.minSalience,
         scoreThreshold: input.scoreThreshold,
+        includeInvalidated: input.includeInvalidated,
+        explain: input.explain,
       });
     } else {
       // Plain text query → embed it server-side and run a semantic vector search,
@@ -331,6 +371,8 @@ export class ToolHandler {
         limit: input.limit,
         minSalience: input.minSalience,
         scoreThreshold: input.scoreThreshold,
+        includeInvalidated: input.includeInvalidated,
+        explain: input.explain,
       });
       results = search.results;
     }
@@ -346,6 +388,10 @@ export class ToolHandler {
         score: r.score,
         tags: r.memory.metadata.tags,
         createdAt: r.memory.createdAt,
+        ...(r.memory.invalidatedAt
+          ? { invalidatedAt: r.memory.invalidatedAt, hint: 'superseded — resolve via memory_current' }
+          : {}),
+        ...(r.trace ? { trace: r.trace } : {}),
       })),
     });
   }
@@ -580,21 +626,16 @@ export class ToolHandler {
       minSalience: 3,
     });
 
-    // L2: Topic-filtered memories if query provided
+    // L2: Topic-relevant memories via real retrieval (hybrid/semantic when
+    // embeddings are configured, substring otherwise).
     let l2: Memory[] = [];
     if (input.query) {
       const sanitized = sanitizeSearchQuery(input.query);
-      const l2Candidates = await this.memoryService.searchMemories({
+      const search = await this.memoryService.searchByText(sanitized, {
         namespace: input.namespace,
         limit: 10,
       });
-      // Simple keyword filter for L2 since we don't have full-text search yet
-      const queryLower = sanitized.toLowerCase();
-      l2 = l2Candidates.filter(
-        (m) =>
-          m.content.toLowerCase().includes(queryLower) ||
-          m.metadata.tags.some((t) => t.toLowerCase().includes(queryLower))
-      );
+      l2 = search.results.map((r) => r.memory);
     }
 
     // Combine and deduplicate
@@ -606,6 +647,31 @@ export class ToolHandler {
       return true;
     });
 
+    // Progressive disclosure: 'index' packs one line per memory into a tiny
+    // budget (~150 tokens) — the agent drills into anything interesting with
+    // memory_recall/memory_search instead of paying for full contents upfront.
+    if (input.depth === 'index') {
+      const INDEX_BUDGET_CHARS = 640;
+      let indexChars = 0;
+      const lines: string[] = [];
+      for (const m of combined) {
+        const gist = m.content.length > 80 ? `${m.content.slice(0, 77)}...` : m.content;
+        const line = `${m.id.id.slice(-8)} [${m.memoryType[0]}${Math.round(m.metadata.effectiveSalience)}] ${gist}`;
+        if (indexChars + line.length > INDEX_BUDGET_CHARS) break;
+        indexChars += line.length;
+        lines.push(line);
+      }
+      return this.success({
+        namespace: input.namespace,
+        query: input.query,
+        depth: 'index',
+        totalAvailable: combined.length,
+        indexed: lines.length,
+        index: lines,
+        hint: 'One line per memory: <id-suffix> [<type><salience>] <gist>. Drill down with memory_search (topic) or memory_recall (full id via memory_search).',
+      });
+    }
+
     // Enforce ~900 token budget (approx 4 chars/token, ~3600 chars total)
     let totalChars = 0;
     const budgeted = combined.filter((m) => {
@@ -616,6 +682,7 @@ export class ToolHandler {
     return this.success({
       namespace: input.namespace,
       query: input.query,
+      depth: 'full',
       totalLoaded: budgeted.length,
       l1Count: l1.length,
       l2Count: l2.length,
@@ -626,6 +693,113 @@ export class ToolHandler {
         tags: m.metadata.tags,
         content: m.content,
         createdAt: m.createdAt,
+      })),
+    });
+  }
+
+  private async handleMemoryIngest(args: unknown): Promise<ToolResult> {
+    const input = MemoryIngestSchema.parse(args) as MemoryIngestInput;
+    walLog('memory_ingest', args);
+
+    if (!this.intelligence.isEnabled()) {
+      return this.error(
+        'Intelligence layer disabled: set LLM_MODEL (plus LLM_API_KEY / LLM_BASE_URL for any OpenAI-compatible endpoint, incl. local Ollama). Use memory_store to store curated facts directly.'
+      );
+    }
+
+    if (input.dryRun) {
+      const facts = await this.intelligence.extractFacts(input.messages);
+      return this.success({ dryRun: true, count: facts.length, facts });
+    }
+
+    const result = await this.intelligence.ingest(input.messages, {
+      namespace: input.namespace,
+      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+      ...(input.agentId ? { agentId: input.agentId } : {}),
+      resolve: input.resolve,
+    });
+
+    return this.success({
+      ingested: true,
+      counts: {
+        facts: result.facts.length,
+        created: result.created.length,
+        duplicates: result.duplicates,
+        resolutions: result.resolutions.length,
+      },
+      created: result.created.map((m) => ({
+        id: m.id.id,
+        namespace: m.id.namespace,
+        type: m.memoryType,
+        salience: m.metadata.salience,
+        content: m.content,
+      })),
+      resolutions: result.resolutions,
+    });
+  }
+
+  private async handleMemoryUpdate(args: unknown): Promise<ToolResult> {
+    const input = MemoryUpdateSchema.parse(args) as MemoryUpdateInput;
+    walLog('memory_update', args);
+
+    const id = { id: input.id, namespace: input.namespace };
+    const updated = await this.memoryService.updateMemory(id, {
+      ...(input.content !== undefined ? { content: input.content } : {}),
+      ...(input.tags !== undefined ? { tags: input.tags } : {}),
+      ...(input.entities !== undefined ? { entities: input.entities } : {}),
+      ...(input.salience !== undefined ? { salience: input.salience } : {}),
+    });
+    if (!updated) {
+      return this.error(`Memory not found: ${input.namespace}:${input.id}`);
+    }
+
+    // A content change invalidates the stored vector — re-embed so semantic
+    // search keeps matching the NEW text (previously a silent stale-vector gap).
+    let reEmbedded = false;
+    if (input.content !== undefined) {
+      const embedder = this.memoryService.getEmbeddingService();
+      if (embedder.isEnabled()) {
+        const vector = await embedder.embed(updated.content);
+        if (vector) {
+          await this.memoryService.storeEmbedding(id, vector);
+          reEmbedded = true;
+        }
+      }
+    }
+
+    return this.success({
+      updated: true,
+      id: updated.id.id,
+      namespace: updated.id.namespace,
+      version: updated.version,
+      reEmbedded,
+    });
+  }
+
+  private async handleMemoryCurrent(args: unknown): Promise<ToolResult> {
+    const input = MemoryCurrentSchema.parse(args) as MemoryCurrentInput;
+
+    const result = await this.memoryService.getCurrentFact({
+      id: input.id,
+      namespace: input.namespace,
+    });
+    if (!result) {
+      return this.error(`Memory not found: ${input.namespace}:${input.id}`);
+    }
+
+    return this.success({
+      superseded: result.superseded,
+      hops: result.chain.length - 1,
+      current: {
+        id: result.current.id.id,
+        namespace: result.current.id.namespace,
+        content: result.current.content,
+        createdAt: result.current.createdAt,
+      },
+      chain: result.chain.map((m) => ({
+        id: m.id.id,
+        content: m.content,
+        invalidatedAt: m.invalidatedAt ?? null,
       })),
     });
   }

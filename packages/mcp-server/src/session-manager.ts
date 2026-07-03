@@ -10,6 +10,8 @@ import {
   Memory,
   SearchResult,
   RelationType,
+  type IntelligenceService,
+  type IngestMessage,
 } from '@memory-stack/core';
 import { ulid } from 'ulid';
 
@@ -39,10 +41,12 @@ const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 export class SessionManager {
   private sessions: Map<string, Session> = new Map();
   private memoryService: MemoryService;
+  private intelligence: IntelligenceService | null;
   private cleanupTimer: NodeJS.Timeout | null = null;
 
-  constructor(memoryService: MemoryService) {
+  constructor(memoryService: MemoryService, intelligence?: IntelligenceService) {
     this.memoryService = memoryService;
+    this.intelligence = intelligence ?? null;
     // Start periodic cleanup of stale sessions
     this.startCleanupTimer();
   }
@@ -299,38 +303,70 @@ export class SessionManager {
 
     extractedMemoryIds.push(archiveMemory.id.id);
 
-    // Extract important memories if requested
+    // Extract important memories if requested. With a configured LLM this is
+    // real fact extraction + conflict resolution; without one it falls back to
+    // the legacy length heuristic (user messages > 50 chars, verbatim).
     if (options.extractMemories !== false) {
-      // Find user messages with potential factual content
-      const importantTurns = session.turns.filter(
-        (t) => t.role === 'user' && t.content.length > 50
-      );
-
-      for (const turn of importantTurns.slice(0, 5)) {
-        // Max 5 extractions
-        const extracted = await this.memoryService.createMemory({
-          content: turn.content,
-          memoryType: MemoryType.SEMANTIC,
-          namespace: archiveNamespace,
-          tags: ['extracted', 'from_session'],
-          source: {
-            type: 'extraction',
+      let extractedViaLLM = false;
+      if (this.intelligence?.isEnabled()) {
+        try {
+          const messages: IngestMessage[] = session.turns.map((t) => ({
+            role: t.role,
+            content: t.content,
+            timestamp: t.timestamp.toISOString(),
+          }));
+          const result = await this.intelligence.ingest(messages, {
+            namespace: archiveNamespace,
             sessionId,
-            agentId: session.agentId,
-          },
-          salience: 5,
-          decayRate: 0.1,
-        });
+            ...(session.agentId ? { agentId: session.agentId } : {}),
+          });
+          for (const memory of result.created) {
+            extractedMemoryIds.push(memory.id.id);
+            await this.memoryService.createRelation(
+              memory.id,
+              archiveMemory.id,
+              RelationType.PART_OF,
+              0.8
+            );
+          }
+          extractedViaLLM = true;
+        } catch (e) {
+          console.error('[SessionManager] LLM extraction failed, falling back to heuristic:', e);
+        }
+      }
 
-        extractedMemoryIds.push(extracted.id.id);
-
-        // Create relation to archive
-        await this.memoryService.createRelation(
-          extracted.id,
-          archiveMemory.id,
-          RelationType.PART_OF,
-          0.8
+      if (!extractedViaLLM) {
+        // Find user messages with potential factual content
+        const importantTurns = session.turns.filter(
+          (t) => t.role === 'user' && t.content.length > 50
         );
+
+        for (const turn of importantTurns.slice(0, 5)) {
+          // Max 5 extractions
+          const extracted = await this.memoryService.createMemory({
+            content: turn.content,
+            memoryType: MemoryType.SEMANTIC,
+            namespace: archiveNamespace,
+            tags: ['extracted', 'from_session'],
+            source: {
+              type: 'extraction',
+              sessionId,
+              agentId: session.agentId,
+            },
+            salience: 5,
+            decayRate: 0.1,
+          });
+
+          extractedMemoryIds.push(extracted.id.id);
+
+          // Create relation to archive
+          await this.memoryService.createRelation(
+            extracted.id,
+            archiveMemory.id,
+            RelationType.PART_OF,
+            0.8
+          );
+        }
       }
     }
 

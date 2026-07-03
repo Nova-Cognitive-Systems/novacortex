@@ -19,6 +19,7 @@
 import type { SurrealDBConfig } from '../adapters/surrealdb.js';
 import type { QdrantConfig } from '../adapters/qdrant.js';
 import type { EmbeddingServiceConfig } from '../services/embedding-service.js';
+import type { LLMServiceConfig } from '../services/llm-service.js';
 
 type Env = Record<string, string | undefined>;
 
@@ -61,5 +62,23 @@ export function resolveEmbeddingConfig(env: Env = process.env): EmbeddingService
   if (env['OPENAI_API_KEY']) cfg.apiKey = env['OPENAI_API_KEY'];
   if (env['EMBEDDING_MODEL']) cfg.model = env['EMBEDDING_MODEL'];
   if (env['OPENAI_BASE_URL']) cfg.baseUrl = env['OPENAI_BASE_URL'];
+  return cfg;
+}
+
+/**
+ * LLM (chat-completions) config for the intelligence layer. LLM_* vars take
+ * precedence, falling back to the OPENAI_* pair so an OpenAI user only has to
+ * set LLM_MODEL. No model set = intelligence layer disabled (conscious opt-in:
+ * an embedding key alone must never send memory content to a chat model).
+ */
+export function resolveLLMConfig(env: Env = process.env): LLMServiceConfig {
+  const cfg: LLMServiceConfig = {};
+  const apiKey = env['LLM_API_KEY'] || env['OPENAI_API_KEY'];
+  const baseUrl = env['LLM_BASE_URL'] || env['OPENAI_BASE_URL'];
+  if (apiKey) cfg.apiKey = apiKey;
+  if (env['LLM_MODEL']) cfg.model = env['LLM_MODEL'];
+  if (baseUrl) cfg.baseUrl = baseUrl;
+  if (env['LLM_MAX_TOKENS']) cfg.maxTokens = parseInt(env['LLM_MAX_TOKENS'], 10);
+  if (env['LLM_TIMEOUT_MS']) cfg.timeoutMs = parseInt(env['LLM_TIMEOUT_MS'], 10);
   return cfg;
 }

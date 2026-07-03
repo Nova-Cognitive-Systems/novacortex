@@ -21,6 +21,12 @@ export interface MemoryCore {
   readonly createdAt: Date;
   readonly accessedAt: Date;
   readonly version: number;
+  /**
+   * Set when this memory stopped being the current truth (superseded by a newer
+   * fact). Append-only semantics: the memory is never deleted or rewritten —
+   * it is invalidated and stays queryable as history.
+   */
+  readonly invalidatedAt?: Date;
 }
 
 export enum MemoryType {
@@ -116,7 +122,8 @@ export interface PortableMemory {
  */
 export interface PMFHeader {
   readonly magic: 'NCPMF';           // Magic bytes for format detection
-  readonly version: '1.0';
+  /** 1.1 adds the optional per-memory `invalidated` timestamp (append-only supersession). */
+  readonly version: '1.0' | '1.1';
   readonly created: Date;
   readonly source: PMFSourceInfo;
   readonly integrity: PMFIntegrity;
@@ -155,6 +162,8 @@ export interface PMFMemoryEntry {
   readonly created: string;          // ISO 8601
   readonly accessed: string;         // ISO 8601
   readonly version: number;
+  /** ISO 8601 — set when this fact was superseded (PMF v1.1, append-only history). */
+  readonly invalidated?: string;
   readonly metadata: {
     readonly confidence: number;
     readonly salience: number;
@@ -217,6 +226,12 @@ export interface UpdateMemoryInput {
   effectiveSalience?: number;
   /** Timestamp of the last decay recalculation (set alongside effectiveSalience). */
   lastDecayCalculation?: Date;
+  /**
+   * Mark the memory as no longer current (append-only supersession) or clear
+   * the mark with null. Set by the resolution engine when a newer memory
+   * supersedes this one.
+   */
+  invalidatedAt?: Date | null;
 }
 
 export interface SearchOptions {
@@ -236,6 +251,40 @@ export interface SearchOptions {
    * relevant (e.g. a value that changed over time).
    */
   recencyWeight?: number;
+  /**
+   * Include memories that were superseded/invalidated (default false: search
+   * returns only CURRENT facts — the payoff of append-only resolution).
+   */
+  includeInvalidated?: boolean;
+  /**
+   * Point-in-time query: return the store as it was believed at this instant —
+   * memories created at/before `asOf` and not yet invalidated at `asOf`.
+   * Implies looking past later invalidations (independent of includeInvalidated).
+   */
+  asOf?: Date;
+  /**
+   * Cross-encoder reranking of the result page (needs a configured
+   * RerankService). Defaults to ON when the service is configured; set false
+   * to opt out per query. Applied only to text-query searches at offset 0.
+   */
+  rerank?: boolean;
+  /**
+   * LLM-free graph-aware boost: results that are hubs in the typed relation
+   * graph rank slightly higher (log-scaled edge degree). Default off.
+   */
+  graphBoost?: boolean;
+  /**
+   * Deterministic temporal normalization of the text query ("yesterday",
+   * "last week", "3 days ago" → createdAfter filter). Default off; explicit
+   * createdAfter/asOf options always win.
+   */
+  parseTemporal?: boolean;
+  /**
+   * Explainable recall: attach a human-readable `trace` to each result
+   * describing WHY it ranked where it did (retrieval mode, index score,
+   * graph boost, recency blend, rerank score, supersession state).
+   */
+  explain?: boolean;
 }
 
 export interface VectorSearchOptions extends SearchOptions {
@@ -246,4 +295,48 @@ export interface VectorSearchOptions extends SearchOptions {
 export interface SearchResult {
   memory: Memory;
   score?: number;
+  /** Present when the search ran with `explain: true` — why this result ranked here. */
+  trace?: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Intelligence layer (fact extraction + update resolution)
+// ---------------------------------------------------------------------------
+
+/** One conversation turn handed to the ingestion pipeline. */
+export interface IngestMessage {
+  role: 'user' | 'assistant' | 'system' | 'tool';
+  content: string;
+  /** Optional speaker name (multi-party conversations). */
+  name?: string;
+  /** Optional ISO timestamp of the turn (improves temporal extraction). */
+  timestamp?: string;
+}
+
+/** A discrete fact distilled from a conversation by the extraction step. */
+export interface ExtractedFact {
+  /** Self-contained statement, understandable without the conversation. */
+  content: string;
+  memoryType: MemoryType;
+  tags: string[];
+  entities: Entity[];
+  /** 1..10 — how important this fact is to remember long-term. */
+  salience: number;
+  /** 0..1 — extraction confidence. */
+  confidence: number;
+}
+
+/** What the resolution step decided about a (new memory, existing memory) pair. */
+export type ResolutionDecision =
+  | 'supersedes' // the new memory is the current version of the old fact
+  | 'contradicts' // both claim to be true but conflict — flag, keep both
+  | 'duplicates' // same fact, differently worded
+  | 'related' // same topic, no conflict
+  | 'none';
+
+export interface ResolutionOutcome {
+  memory: MemoryId;
+  candidate: MemoryId;
+  decision: ResolutionDecision;
+  reason: string;
 }

@@ -10,8 +10,9 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import Busboy from 'busboy';
-import { MemoryService, MemoryType, resolveSurrealConfig, resolveQdrantConfig, resolveEmbeddingConfig } from '@memory-stack/core';
+import { MemoryService, MemoryType, LLMService, IntelligenceService, resolveSurrealConfig, resolveQdrantConfig, resolveEmbeddingConfig, resolveLLMConfig } from '@memory-stack/core';
 import { createMemoriesRouter } from './routes/memories.js';
+import { installIngestRoutes } from './routes/ingest.js';
 import { MemoryProcessor, DEFAULT_PROCESSOR_CONFIG, type ProcessorConfig, setProcessorInstance } from './services/processor.js';
 import { getLicenseService, type LicenseTier, type FederationRule } from './services/license.js';
 import { knowledgeService } from './services/knowledge.js';
@@ -131,6 +132,11 @@ const memoryService = new MemoryService({
   embedding: config.embedding,
 });
 
+// Intelligence layer (fact extraction + update resolution). Disabled unless an
+// LLM is explicitly configured via LLM_MODEL — graceful no-op otherwise.
+const llmService = new LLMService(resolveLLMConfig());
+const intelligenceService = new IntelligenceService(memoryService, llmService);
+
 // Initialize memory processor
 const memoryProcessor = new MemoryProcessor(memoryService, {
   relationDiscovery: {
@@ -183,7 +189,7 @@ app.use(cors(corsOrigins.length > 0 ? { origin: corsOrigins } : {}));
 app.use(requestLogger);
 app.use((req, res, next) => {
   // Large imports and file uploads need extended timeouts
-  const longPaths = ['/knowledge/upload', '/memories/import/chat', '/memories/import', '/memories/import/pmf'];
+  const longPaths = ['/knowledge/upload', '/memories/import/chat', '/memories/import', '/memories/import/pmf', '/memories/ingest', '/memories/vectors/migrate-hybrid'];
   const ms = longPaths.some(p => req.path.startsWith(p)) ? 300000 : 60000;
   timeoutMiddleware(ms)(req, res, next);
 });
@@ -310,8 +316,19 @@ app.get('/health', async (_req: Request, res: Response) => {
       timestamp: new Date().toISOString(),
       stats,
       search: {
-        mode: embStatus.status === 'ok' ? 'semantic' : 'text',
+        mode:
+          embStatus.status === 'ok'
+            ? memoryService.isHybridEnabled()
+              ? 'hybrid'
+              : 'semantic'
+            : 'text',
         embeddings: embStatus,
+        hybrid: memoryService.isHybridEnabled(),
+        rerank: memoryService.getRerankService().isEnabled(),
+      },
+      intelligence: {
+        enabled: intelligenceService.isEnabled(),
+        model: intelligenceService.getModel() ?? null,
       },
       docs: '/docs',
       openapi: '/openapi.json',
@@ -395,8 +412,9 @@ app.get('/stats', requireScopes('memories:read'), async (_req: Request, res: Res
     await memoryService.connect();
 
     // OPTIMIZATION: Fetch only necessary fields with a reasonable limit
-    // For large datasets, consider adding aggregate queries to the adapter
-    const memories = await memoryService.searchMemories({ limit: 10000 });
+    // For large datasets, consider adding aggregate queries to the adapter.
+    // Stats count STORED rows, so include invalidated (superseded) history.
+    const memories = await memoryService.searchMemories({ limit: 10000, includeInvalidated: true });
 
     // Build stats manually since core service doesn't return proper breakdown
     const byNamespace: Record<string, number> = {};
@@ -454,6 +472,32 @@ const licenseService = getLicenseService();
 app.use(
   ['/memories', '/knowledge', '/buckets', '/processor'],
   tierRateLimit(() => licenseService.getApiRateLimit())
+);
+
+// Conversation ingestion — MUST come before the memories router so
+// /memories/ingest/:jobId isn't captured by broader /memories patterns.
+installIngestRoutes(app, intelligenceService);
+
+// One-time hybrid-search migration for collections created before the sparse
+// lexical leg existed (Qdrant cannot add sparse vectors in place). Registered
+// before the memories router for the same routing reason as above.
+app.post(
+  '/memories/vectors/migrate-hybrid',
+  requireScopes('admin:*'),
+  async (_req: Request, res: Response) => {
+    try {
+      const result = await memoryService.migrateToHybrid();
+      res.json({
+        ...result,
+        hybridEnabled: memoryService.isHybridEnabled(),
+        message: result.alreadyHybrid
+          ? 'Collection already supports hybrid search.'
+          : `Migrated ${result.migrated} vectors — hybrid (dense + BM25) search is now active.`,
+      });
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
+    }
+  }
 );
 
 // Mount memories router
@@ -586,8 +630,13 @@ app.delete('/namespaces/:name', requireScopes('namespaces:write'), async (req: R
 
     await memoryService.connect();
 
-    // Get all memories in this namespace
-    const memories = await memoryService.searchMemories({ namespace: name, limit: 1000 });
+    // Get all memories in this namespace — INCLUDING invalidated history, or a
+    // namespace delete would silently leave superseded rows behind as orphans.
+    const memories = await memoryService.searchMemories({
+      namespace: name,
+      limit: 1000,
+      includeInvalidated: true,
+    });
 
     // Delete each memory
     let deleted = 0;
@@ -618,6 +667,16 @@ app.post('/search', requireScopes('memories:read'), async (req: Request, res: Re
     // (falling back to substring search if embeddings are disabled) — so callers
     // no longer need to compute embeddings client-side.
     const { vector, query, ...options } = req.body ?? {};
+
+    // Temporal params arrive as JSON strings — coerce for the service layer.
+    if (typeof options.asOf === 'string' && options.asOf.length > 0) {
+      const asOf = new Date(options.asOf);
+      if (isNaN(asOf.getTime())) {
+        res.status(400).json({ error: 'bad_request', message: '`asOf` must be an ISO 8601 datetime.' });
+        return;
+      }
+      options.asOf = asOf;
+    }
 
     if (Array.isArray(vector) && vector.length > 0) {
       const results = await memoryService.vectorSearch({ ...options, vector });
@@ -1782,7 +1841,7 @@ async function start() {
       if (embStatus.status === 'disabled') {
         logger.warn(
           'No embedding provider configured (OPENAI_API_KEY unset) — search runs in SUBSTRING mode, not semantic. ' +
-            'For fully local semantic search, run the local-embeddings compose profile or point OPENAI_BASE_URL at any OpenAI-compatible server.'
+            'For fully local semantic search, run the local-ai compose profile or point OPENAI_BASE_URL at any OpenAI-compatible server.'
         );
       }
       if (embStatus.status === 'ok') {
@@ -1790,6 +1849,24 @@ async function start() {
           `Semantic search active: model=${embStatus.model} dim=${embStatus.dimension}`
         );
       }
+    }
+
+    if (memoryService.isHybridEnabled()) {
+      logger.info('Hybrid retrieval active: dense (semantic) + sparse (BM25) with server-side RRF fusion');
+    } else {
+      logger.info(
+        'Hybrid retrieval not available on this vector collection (created pre-v1.3). ' +
+          'Run POST /memories/vectors/migrate-hybrid (admin token) once to enable dense+BM25 fusion.'
+      );
+    }
+    if (memoryService.getRerankService().isEnabled()) {
+      logger.info('Cross-encoder reranking active (RERANK_URL configured)');
+    }
+
+    if (intelligenceService.isEnabled()) {
+      logger.info(`Intelligence layer active: model=${intelligenceService.getModel()} (fact extraction + update resolution)`);
+    } else {
+      logger.info('Intelligence layer disabled (set LLM_MODEL to enable fact extraction + update resolution; works with any OpenAI-compatible endpoint incl. local Ollama)');
     }
 
     // Start memory processor if enabled
