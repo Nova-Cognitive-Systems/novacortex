@@ -18,6 +18,8 @@ import { SurrealDBAdapter, type SurrealDBConfig } from '../adapters/surrealdb.js
 import { QdrantAdapter, type QdrantConfig } from '../adapters/qdrant.js';
 import { ConnectionManager, ConnectionState } from '../lib/connection-manager.js';
 import { EmbeddingService, type EmbeddingServiceConfig } from './embedding-service.js';
+import { RerankService, type RerankServiceConfig } from './rerank-service.js';
+import { parseTemporalQuery } from '../lib/temporal-parse.js';
 import { createHash } from 'crypto';
 
 export interface MemoryServiceConfig {
@@ -33,6 +35,11 @@ export interface MemoryServiceConfig {
    * transparently falling back to substring search when embeddings are disabled.
    */
   embedding?: EmbeddingServiceConfig;
+  /**
+   * Optional cross-encoder rerank endpoint (TEI-compatible /rerank). When
+   * configured, text-query searches over-fetch and rerank the page.
+   */
+  rerank?: RerankServiceConfig;
 }
 
 export interface ServiceHealth {
@@ -50,11 +57,13 @@ export class MemoryService {
   private qdrantManager: ConnectionManager;
   private lastHealthCheck: Date | null = null;
   private embeddingService: EmbeddingService;
+  private rerankService: RerankService;
 
   constructor(config: MemoryServiceConfig) {
     this.surrealdb = new SurrealDBAdapter(config.surrealdb);
     this.qdrant = new QdrantAdapter(config.qdrant);
     this.embeddingService = new EmbeddingService(config.embedding ?? {});
+    this.rerankService = new RerankService(config.rerank ?? {});
 
     // Setup connection manager for SurrealDB
     this.surrealdbManager = new ConnectionManager(
@@ -411,51 +420,103 @@ export class MemoryService {
   }
 
   /**
-   * Semantic text search: embeds the query and runs a vector search when
-   * embeddings are enabled, otherwise transparently falls back to substring
-   * search. This is the path the REST API, MCP server and CLI should use for a
-   * plain text query so that the headline "semantic search" actually works
-   * end-to-end without the caller needing to pre-compute an embedding vector.
+   * Text search — the headline retrieval path used by REST/MCP/CLI/SDKs.
+   * With embeddings configured it runs HYBRID retrieval (dense semantic +
+   * sparse BM25-style lexical, fused server-side with RRF) when the collection
+   * supports it, plain semantic vector search otherwise, and transparently
+   * falls back to substring search when embeddings are disabled. An optional
+   * cross-encoder rerank stage refines the final page.
    *
-   * The returned `mode` tells callers which path was taken (useful for clients
-   * that want to surface "semantic" vs "text" results).
+   * The returned `mode` tells callers which path was taken.
    */
   async searchByText(
     query: string,
     options: Omit<VectorSearchOptions, 'vector'> = {}
-  ): Promise<{ results: SearchResult[]; mode: 'semantic' | 'text' }> {
+  ): Promise<{ results: SearchResult[]; mode: 'hybrid' | 'semantic' | 'text' }> {
     await this.ensureConnected();
 
-    if (this.embeddingService.isEnabled() && query.trim().length > 0) {
-      const vector = await this.embeddingService.embed(query);
+    let effOptions: Omit<VectorSearchOptions, 'vector'> = { ...options };
+    let effQuery = query;
+
+    // Deterministic temporal normalization (opt-in): "last week", "3 days ago"
+    // → createdAfter filter. Explicit temporal options always win.
+    if (options.parseTemporal && !options.createdAfter && !options.asOf) {
+      const parsed = parseTemporalQuery(query);
+      if (parsed.createdAfter) {
+        effOptions = { ...effOptions, createdAfter: parsed.createdAfter };
+        effQuery = parsed.cleaned;
+      }
+    }
+
+    if (this.embeddingService.isEnabled() && effQuery.trim().length > 0) {
+      const vector = await this.embeddingService.embed(effQuery);
       if (vector) {
-        const results = await this.vectorSearch({ ...options, vector });
-        return { results, mode: 'semantic' };
+        const baseLimit = effOptions.limit ?? 10;
+        // Reranking needs a candidate pool beyond the final page; only
+        // meaningful on the first page.
+        const wantRerank =
+          this.rerankService.isEnabled() &&
+          effOptions.rerank !== false &&
+          (effOptions.offset ?? 0) === 0;
+        const searchOptions: VectorSearchOptions = {
+          ...effOptions,
+          vector,
+          ...(wantRerank ? { limit: Math.min(Math.max(baseLimit * 5, 20), 50) } : {}),
+        };
+
+        const window = this.prepareSearchWindow(searchOptions);
+        const { results: raw, hybrid } = await this.qdrant.hybridSearch(effQuery, window.qOptions);
+        let results = await this.finalizeVectorResults(raw, searchOptions, window);
+        if (wantRerank) {
+          results = await this.applyRerank(effQuery, results, baseLimit);
+        }
+        return { results, mode: hybrid ? 'hybrid' : 'semantic' };
       }
     }
 
     // Fallback: substring search via SurrealDB.
-    const memories = await this.surrealdb.search({ ...options, query });
+    const memories = await this.surrealdb.search({ ...effOptions, query: effQuery });
     return { results: memories.map((memory) => ({ memory })), mode: 'text' };
   }
 
   async vectorSearch(options: VectorSearchOptions): Promise<SearchResult[]> {
     await this.ensureConnected();
+    const window = this.prepareSearchWindow(options);
+    const vectorResults = await this.qdrant.search(window.qOptions);
+    return this.finalizeVectorResults(vectorResults, options, window);
+  }
 
-    const recencyWeight = options.recencyWeight && options.recencyWeight > 0 ? Math.min(1, options.recencyWeight) : 0;
+  /**
+   * Over-fetch a candidate pool from offset 0 whenever ranking/filtering
+   * happens after enrichment (recency re-ranking, asOf/createdAfter windows,
+   * graph boost — none of which the index can apply); otherwise let Qdrant
+   * apply limit/offset directly.
+   */
+  private prepareSearchWindow(options: VectorSearchOptions): {
+    qOptions: VectorSearchOptions;
+    postProcess: boolean;
+    recencyWeight: number;
+    limit: number;
+    offset: number;
+  } {
+    const recencyWeight =
+      options.recencyWeight && options.recencyWeight > 0 ? Math.min(1, options.recencyWeight) : 0;
     const limit = options.limit ?? 10;
     const offset = options.offset ?? 0;
-
-    // Over-fetch a candidate pool from offset 0 whenever ranking/filtering
-    // happens after enrichment: recency re-ranking, and asOf time-window
-    // filtering (which can only see invalidatedAt on the enriched rows).
-    // Otherwise let Qdrant apply limit/offset directly.
-    const postProcess = recencyWeight > 0 || !!options.asOf;
+    const postProcess =
+      recencyWeight > 0 || !!options.asOf || !!options.createdAfter || !!options.graphBoost;
     const qOptions: VectorSearchOptions = postProcess
       ? { ...options, offset: 0, limit: Math.max((offset + limit) * 4, 20) }
       : options;
-    const vectorResults = await this.qdrant.search(qOptions);
+    return { qOptions, postProcess, recencyWeight, limit, offset };
+  }
 
+  /** Enrich raw index hits from SurrealDB truth, filter, re-rank, paginate. */
+  private async finalizeVectorResults(
+    vectorResults: SearchResult[],
+    options: VectorSearchOptions,
+    window: { postProcess: boolean; recencyWeight: number; limit: number; offset: number }
+  ): Promise<SearchResult[]> {
     if (vectorResults.length === 0) {
       return [];
     }
@@ -493,24 +554,44 @@ export class MemoryService {
     } else if (!options.includeInvalidated) {
       enrichedResults = enrichedResults.filter((r) => !r.memory.invalidatedAt);
     }
+    if (options.createdAfter) {
+      const afterMs = options.createdAfter.getTime();
+      enrichedResults = enrichedResults.filter((r) => r.memory.createdAt.getTime() >= afterMs);
+    }
+
+    // Optional LLM-free graph boost: hubs in the typed relation graph rank
+    // slightly higher (log-scaled edge degree, capped) — cheap because the
+    // relation table is indexed by endpoint.
+    if (options.graphBoost && enrichedResults.length > 0) {
+      const degrees = await Promise.all(
+        enrichedResults.map((r) =>
+          this.surrealdb.findRelations(r.memory.id).then((rels) => rels.length).catch(() => 0)
+        )
+      );
+      enrichedResults.forEach((r, i) => {
+        const boost = 1 + 0.08 * Math.log2(1 + Math.min(degrees[i]!, 8));
+        r.score = (r.score ?? 0) * boost;
+      });
+      enrichedResults.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    }
 
     // Optional recency weighting: blend an ABSOLUTE recency score (exponential
     // decay, 30-day half-life — stable across requests/pages) with the relevance
     // score (clamped to 0..1) and re-rank, then page in JS. This lets the current
     // fact outrank an older, equally-similar one without breaking pagination.
-    if (recencyWeight > 0) {
+    if (window.recencyWeight > 0) {
       const now = Date.now();
       const HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000;
       for (const r of enrichedResults) {
         const ageMs = Math.max(0, now - r.memory.createdAt.getTime());
         const recency = Math.pow(0.5, ageMs / HALF_LIFE_MS);
         const relevance = Math.max(0, Math.min(1, r.score ?? 0));
-        r.score = relevance * (1 - recencyWeight) + recency * recencyWeight;
+        r.score = relevance * (1 - window.recencyWeight) + recency * window.recencyWeight;
       }
       enrichedResults.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
     }
-    if (postProcess) {
-      enrichedResults = enrichedResults.slice(offset, offset + limit);
+    if (window.postProcess) {
+      enrichedResults = enrichedResults.slice(window.offset, window.offset + window.limit);
     }
 
     // Optional relation hydration so callers can detect conflicts/supersessions
@@ -524,6 +605,43 @@ export class MemoryService {
     }
 
     return enrichedResults;
+  }
+
+  /** Cross-encoder rerank of the candidate pool; degrades to input order. */
+  private async applyRerank(
+    query: string,
+    results: SearchResult[],
+    limit: number
+  ): Promise<SearchResult[]> {
+    if (results.length <= 1) return results.slice(0, limit);
+    const scores = await this.rerankService.rerank(
+      query,
+      results.map((r) => r.memory.content)
+    );
+    if (!scores) return results.slice(0, limit);
+    return results
+      .map((r, i) => ({ ...r, score: scores[i] ?? 0 }))
+      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+      .slice(0, limit);
+  }
+
+  /** The shared rerank service (diagnostics). */
+  getRerankService(): RerankService {
+    return this.rerankService;
+  }
+
+  /**
+   * One-time migration to hybrid search for collections created before the
+   * sparse lexical leg existed. See QdrantAdapter.migrateToSparse.
+   */
+  async migrateToHybrid(): Promise<{ migrated: number; alreadyHybrid: boolean }> {
+    await this.ensureConnected();
+    return this.qdrant.migrateToSparse();
+  }
+
+  /** Whether the vector collection supports hybrid (dense+sparse) retrieval. */
+  isHybridEnabled(): boolean {
+    return this.qdrant.isSparseEnabled();
   }
 
   async hybridSearch(

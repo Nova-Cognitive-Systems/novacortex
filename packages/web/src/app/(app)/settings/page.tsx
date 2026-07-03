@@ -85,7 +85,7 @@ export default function SettingsPage() {
 
   // Search / embeddings status (from the public /health endpoint)
   const [searchStatus, setSearchStatus] = useState<{
-    mode: "semantic" | "text";
+    mode: "hybrid" | "semantic" | "text";
     embeddings: {
       status: "ok" | "disabled" | "unreachable" | "dimension_mismatch";
       model: string;
@@ -93,6 +93,8 @@ export default function SettingsPage() {
       expectedDimension: number;
       error?: string;
     };
+    hybrid?: boolean;
+    rerank?: boolean;
   } | null>(null);
 
   const fetchSearchStatus = useCallback(async () => {
@@ -375,15 +377,22 @@ export default function SettingsPage() {
             <Search className="h-5 w-5" />
             Search Mode
             {searchStatus && (
-              <Badge variant={searchStatus.mode === "semantic" ? "default" : "destructive"}>
-                {searchStatus.mode === "semantic" ? "SEMANTIC" : "SUBSTRING FALLBACK"}
+              <Badge variant={searchStatus.mode !== "text" ? "default" : "destructive"}>
+                {searchStatus.mode === "hybrid"
+                  ? "HYBRID"
+                  : searchStatus.mode === "semantic"
+                  ? "SEMANTIC"
+                  : "SUBSTRING FALLBACK"}
               </Badge>
             )}
+            {searchStatus?.rerank && <Badge variant="secondary">RERANK</Badge>}
           </CardTitle>
           <CardDescription>
             {searchStatus
-              ? searchStatus.mode === "semantic"
-                ? "Vector search is active — queries are embedded and matched by meaning."
+              ? searchStatus.mode === "hybrid"
+                ? "Hybrid retrieval is active — semantic vectors + BM25 keyword matching, fused server-side."
+                : searchStatus.mode === "semantic"
+                ? "Vector search is active — queries are embedded and matched by meaning. (Run the hybrid migration to add BM25 keyword matching.)"
                 : "Semantic search is NOT active — queries fall back to plain substring matching."
               : "Checking embedding provider..."}
           </CardDescription>

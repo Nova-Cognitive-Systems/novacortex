@@ -44,6 +44,21 @@ plus its foundation.
 - **PMF v1.1** (RFC PMF-001 updated): memory entries carry the optional `invalidated`
   timestamp; the canonical checksum now covers it; import restores the marker. Old
   v1.0 files remain importable (all historical checksum formulas accepted).
+- **Hybrid retrieval (dense + BM25, server-side RRF fusion)**: text search now runs a
+  semantic leg AND a lexical leg (BM25-style sparse vectors, IDF computed by Qdrant
+  per deployment corpus — fully deterministic, no extra model) fused with Reciprocal
+  Rank Fusion. Fixes the classic lexical-mismatch losses (IDs, names, error codes).
+  New collections get it automatically; pre-v1.3 collections run
+  `POST /memories/vectors/migrate-hybrid` once (streaming, constant-memory).
+  `/health` reports `search.hybrid`; search responses report `mode: "hybrid"`.
+- **Optional cross-encoder reranking**: point `RERANK_URL` at any TEI-compatible
+  `/rerank` endpoint (e.g. a local `text-embeddings-inference` sidecar with
+  bge/Qwen3-reranker — the privacy-first path) and text searches over-fetch and
+  rerank the first page. Off by default; per-query opt-out via `rerank: false`.
+- **Graph-aware ranking boost** (`graphBoost: true`): results that are hubs in the
+  typed relation graph rank slightly higher — LLM-free, log-scaled edge degree.
+- **Deterministic temporal query normalization** (`parseTemporal: true`):
+  "yesterday", "last week", "3 days ago" → `createdAfter` filter, no LLM involved.
 - **Local-AI compose profile**: `docker compose --profile local-ai up -d`
   starts an Ollama sidecar (default `nomic-embed-text`; add `qwen3:8b` for the
   intelligence layer via `OLLAMA_PULL`) so semantic search AND memory intelligence run

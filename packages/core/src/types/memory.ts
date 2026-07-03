@@ -262,6 +262,23 @@ export interface SearchOptions {
    * Implies looking past later invalidations (independent of includeInvalidated).
    */
   asOf?: Date;
+  /**
+   * Cross-encoder reranking of the result page (needs a configured
+   * RerankService). Defaults to ON when the service is configured; set false
+   * to opt out per query. Applied only to text-query searches at offset 0.
+   */
+  rerank?: boolean;
+  /**
+   * LLM-free graph-aware boost: results that are hubs in the typed relation
+   * graph rank slightly higher (log-scaled edge degree). Default off.
+   */
+  graphBoost?: boolean;
+  /**
+   * Deterministic temporal normalization of the text query ("yesterday",
+   * "last week", "3 days ago" → createdAfter filter). Default off; explicit
+   * createdAfter/asOf options always win.
+   */
+  parseTemporal?: boolean;
 }
 
 export interface VectorSearchOptions extends SearchOptions {

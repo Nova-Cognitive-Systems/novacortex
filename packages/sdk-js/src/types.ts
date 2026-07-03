@@ -107,8 +107,12 @@ export interface ListResponse<T> {
 export interface SearchResponse {
   data: SearchResult[];
   count: number;
-  /** Which path served the request: 'semantic' (query embedded), 'text', or 'vector'. */
-  mode?: 'semantic' | 'text' | 'vector';
+  /**
+   * Which path served the request: 'hybrid' (dense + lexical RRF fusion),
+   * 'semantic' (query embedded), 'text' (substring fallback), or 'vector'
+   * (caller-supplied embedding).
+   */
+  mode?: 'hybrid' | 'semantic' | 'text' | 'vector';
 }
 
 export interface CreateRelationInput {

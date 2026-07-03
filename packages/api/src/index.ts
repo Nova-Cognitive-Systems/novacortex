@@ -189,7 +189,7 @@ app.use(cors(corsOrigins.length > 0 ? { origin: corsOrigins } : {}));
 app.use(requestLogger);
 app.use((req, res, next) => {
   // Large imports and file uploads need extended timeouts
-  const longPaths = ['/knowledge/upload', '/memories/import/chat', '/memories/import', '/memories/import/pmf', '/memories/ingest'];
+  const longPaths = ['/knowledge/upload', '/memories/import/chat', '/memories/import', '/memories/import/pmf', '/memories/ingest', '/memories/vectors/migrate-hybrid'];
   const ms = longPaths.some(p => req.path.startsWith(p)) ? 300000 : 60000;
   timeoutMiddleware(ms)(req, res, next);
 });
@@ -316,8 +316,15 @@ app.get('/health', async (_req: Request, res: Response) => {
       timestamp: new Date().toISOString(),
       stats,
       search: {
-        mode: embStatus.status === 'ok' ? 'semantic' : 'text',
+        mode:
+          embStatus.status === 'ok'
+            ? memoryService.isHybridEnabled()
+              ? 'hybrid'
+              : 'semantic'
+            : 'text',
         embeddings: embStatus,
+        hybrid: memoryService.isHybridEnabled(),
+        rerank: memoryService.getRerankService().isEnabled(),
       },
       intelligence: {
         enabled: intelligenceService.isEnabled(),
@@ -470,6 +477,28 @@ app.use(
 // Conversation ingestion — MUST come before the memories router so
 // /memories/ingest/:jobId isn't captured by broader /memories patterns.
 installIngestRoutes(app, intelligenceService);
+
+// One-time hybrid-search migration for collections created before the sparse
+// lexical leg existed (Qdrant cannot add sparse vectors in place). Registered
+// before the memories router for the same routing reason as above.
+app.post(
+  '/memories/vectors/migrate-hybrid',
+  requireScopes('admin:*'),
+  async (_req: Request, res: Response) => {
+    try {
+      const result = await memoryService.migrateToHybrid();
+      res.json({
+        ...result,
+        hybridEnabled: memoryService.isHybridEnabled(),
+        message: result.alreadyHybrid
+          ? 'Collection already supports hybrid search.'
+          : `Migrated ${result.migrated} vectors — hybrid (dense + BM25) search is now active.`,
+      });
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
+    }
+  }
+);
 
 // Mount memories router
 app.use('/memories', createMemoriesRouter(memoryService));
@@ -1820,6 +1849,18 @@ async function start() {
           `Semantic search active: model=${embStatus.model} dim=${embStatus.dimension}`
         );
       }
+    }
+
+    if (memoryService.isHybridEnabled()) {
+      logger.info('Hybrid retrieval active: dense (semantic) + sparse (BM25) with server-side RRF fusion');
+    } else {
+      logger.info(
+        'Hybrid retrieval not available on this vector collection (created pre-v1.3). ' +
+          'Run POST /memories/vectors/migrate-hybrid (admin token) once to enable dense+BM25 fusion.'
+      );
+    }
+    if (memoryService.getRerankService().isEnabled()) {
+      logger.info('Cross-encoder reranking active (RERANK_URL configured)');
     }
 
     if (intelligenceService.isEnabled()) {

@@ -7,6 +7,10 @@ import type {
   VectorSearchOptions,
   SearchResult,
 } from '../types/memory.js';
+import { buildSparseVector, type SparseVector } from '../lib/sparse-text.js';
+
+/** Named sparse vector carrying the lexical (BM25-style) signal. */
+const SPARSE_NAME = 'text';
 
 export interface QdrantConfig {
   url: string;
@@ -34,6 +38,13 @@ export class QdrantAdapter {
   private collectionName: string;
   private vectorSize: number;
   private initialized = false;
+  /**
+   * Whether the collection carries the named sparse "text" vector enabling
+   * server-side hybrid (dense + BM25) RRF fusion. New collections get it
+   * automatically; Qdrant cannot add sparse vectors to an existing collection,
+   * so pre-existing deployments run migrateToSparse() once.
+   */
+  private sparseEnabled = false;
 
   constructor(config: QdrantConfig) {
     this.client = new QdrantClient({
@@ -62,6 +73,11 @@ export class QdrantAdapter {
           vectors: {
             size: this.vectorSize,
             distance: 'Cosine',
+          },
+          // Lexical leg for hybrid search: BM25-style TF client-side, IDF
+          // applied server-side per deployment corpus.
+          sparse_vectors: {
+            [SPARSE_NAME]: { modifier: 'idf' },
           },
           optimizers_config: {
             default_segment_number: 2,
@@ -100,6 +116,18 @@ export class QdrantAdapter {
         })
         .catch(() => {}); // already exists — fine
 
+      // Detect whether this collection supports the sparse hybrid leg (created
+      // fresh with it, or migrated). Pre-existing collections without it keep
+      // working dense-only.
+      try {
+        const info = await this.client.getCollection(this.collectionName);
+        const sparse = (info.config?.params as { sparse_vectors?: Record<string, unknown> } | undefined)
+          ?.sparse_vectors;
+        this.sparseEnabled = !!sparse && SPARSE_NAME in sparse;
+      } catch {
+        this.sparseEnabled = false;
+      }
+
       this.initialized = true;
     } catch (error) {
       throw new Error(`Failed to initialize Qdrant: ${error}`);
@@ -131,11 +159,24 @@ export class QdrantAdapter {
       points: [
         {
           id: pointId,
-          vector: memory.embedding,
+          vector: this.buildPointVector(memory.embedding, memory.content),
           payload: payload as Record<string, unknown>,
         },
       ],
     });
+  }
+
+  /**
+   * Point vector: plain dense when the collection has no sparse config,
+   * otherwise named dense ('') + sparse lexical leg computed from the content.
+   */
+  private buildPointVector(
+    embedding: number[],
+    content: string
+  ): number[] | Record<string, number[] | SparseVector> {
+    if (!this.sparseEnabled) return embedding;
+    const sparse = buildSparseVector(content);
+    return sparse ? { '': embedding, [SPARSE_NAME]: sparse } : { '': embedding };
   }
 
   async upsertBatch(memories: Memory[]): Promise<void> {
@@ -163,7 +204,7 @@ export class QdrantAdapter {
       };
       return {
         id: this.memoryIdToPointId(memory.id),
-        vector: memory.embedding!,
+        vector: this.buildPointVector(memory.embedding!, memory.content),
         payload: payload as Record<string, unknown>,
       };
     });
@@ -195,42 +236,30 @@ export class QdrantAdapter {
     }
   }
 
-  async search(options: VectorSearchOptions): Promise<SearchResult[]> {
-    await this.initialize();
-
-    const filter: Record<string, unknown> = {
-      must: [] as Array<Record<string, unknown>>,
-    };
-
-    const mustConditions = filter['must'] as Array<Record<string, unknown>>;
+  /** Shared payload filter for search/hybrid queries. Undefined = no filter. */
+  private buildFilter(
+    options: Pick<
+      VectorSearchOptions,
+      'namespace' | 'memoryTypes' | 'tags' | 'minSalience' | 'includeInvalidated' | 'asOf'
+    >
+  ): Record<string, unknown> | undefined {
+    const must: Array<Record<string, unknown>> = [];
 
     if (options.namespace) {
-      mustConditions.push({
-        key: 'namespace',
-        match: { value: options.namespace },
-      });
+      must.push({ key: 'namespace', match: { value: options.namespace } });
     }
-
     if (options.memoryTypes && options.memoryTypes.length > 0) {
-      mustConditions.push({
-        key: 'memoryType',
-        match: { any: options.memoryTypes },
-      });
+      must.push({ key: 'memoryType', match: { any: options.memoryTypes } });
     }
-
     if (options.tags && options.tags.length > 0) {
-      mustConditions.push({
-        key: 'tags',
-        match: { any: options.tags },
-      });
+      must.push({ key: 'tags', match: { any: options.tags } });
+    }
+    if (options.minSalience !== undefined) {
+      must.push({ key: 'salience', range: { gte: options.minSalience } });
     }
 
-    if (options.minSalience !== undefined) {
-      mustConditions.push({
-        key: 'salience',
-        range: { gte: options.minSalience },
-      });
-    }
+    const filter: Record<string, unknown> = {};
+    if (must.length > 0) filter['must'] = must;
 
     // Default: exclude invalidated (superseded) facts at the index level. Points
     // written before this flag existed simply lack the field and pass must_not;
@@ -241,12 +270,17 @@ export class QdrantAdapter {
       filter['must_not'] = [{ key: 'invalidated', match: { value: true } }];
     }
 
-    const hasFilter = mustConditions.length > 0 || !!filter['must_not'];
+    return Object.keys(filter).length > 0 ? filter : undefined;
+  }
+
+  async search(options: VectorSearchOptions): Promise<SearchResult[]> {
+    await this.initialize();
+
     const searchResult = await this.client.search(this.collectionName, {
       vector: options.vector,
       limit: options.limit ?? 10,
       offset: options.offset ?? 0,
-      filter: hasFilter ? filter : undefined,
+      filter: this.buildFilter(options),
       score_threshold: options.scoreThreshold,
       with_payload: true,
     });
@@ -260,6 +294,127 @@ export class QdrantAdapter {
     });
   }
 
+  /** Whether the collection supports the sparse lexical leg (hybrid search). */
+  isSparseEnabled(): boolean {
+    return this.sparseEnabled;
+  }
+
+  /**
+   * Hybrid retrieval: dense (semantic) + sparse (BM25-style lexical) legs fused
+   * server-side with Reciprocal Rank Fusion. Falls back to plain dense search
+   * when the collection has no sparse config or the query has no indexable
+   * tokens. RRF scores are rank-based (~0..1), not cosine similarities.
+   */
+  async hybridSearch(
+    queryText: string,
+    options: VectorSearchOptions
+  ): Promise<{ results: SearchResult[]; hybrid: boolean }> {
+    await this.initialize();
+
+    const sparse = this.sparseEnabled ? buildSparseVector(queryText) : null;
+    if (!sparse) {
+      return { results: await this.search(options), hybrid: false };
+    }
+
+    const filter = this.buildFilter(options);
+    const limit = options.limit ?? 10;
+    const offset = options.offset ?? 0;
+    // Each leg over-fetches so fusion sees candidates beyond the final page.
+    const prefetchLimit = Math.max((offset + limit) * 3, 20);
+
+    const response = await this.client.query(this.collectionName, {
+      prefetch: [
+        { query: options.vector, limit: prefetchLimit, filter },
+        { query: sparse, using: SPARSE_NAME, limit: prefetchLimit, filter },
+      ],
+      query: { fusion: 'rrf' },
+      limit,
+      offset,
+      with_payload: true,
+    });
+
+    return {
+      hybrid: true,
+      results: response.points.map((result) => {
+        const payload = result.payload as unknown as PointPayload;
+        return {
+          memory: this.payloadToPartialMemory(payload),
+          score: result.score,
+        };
+      }),
+    };
+  }
+
+  /**
+   * One-time migration for collections created before hybrid search: Qdrant
+   * cannot add sparse vectors in place, so stream-copy every point through a
+   * temp collection into a recreated collection that has the sparse config,
+   * computing the lexical leg from each point's stored content. Constant
+   * memory (batched scroll), idempotent (no-op when already sparse-enabled).
+   */
+  async migrateToSparse(): Promise<{ migrated: number; alreadyHybrid: boolean }> {
+    await this.initialize();
+    if (this.sparseEnabled) return { migrated: 0, alreadyHybrid: true };
+
+    const tmpName = `${this.collectionName}_hybrid_migration`;
+    const collectionConfig = {
+      vectors: { size: this.vectorSize, distance: 'Cosine' as const },
+      sparse_vectors: { [SPARSE_NAME]: { modifier: 'idf' as const } },
+      optimizers_config: { default_segment_number: 2 },
+      replication_factor: 1,
+    };
+
+    const copy = async (from: string, to: string): Promise<number> => {
+      let copied = 0;
+      let offset: string | number | Record<string, unknown> | null | undefined = undefined;
+      for (;;) {
+        const res = await this.client.scroll(from, {
+          limit: 128,
+          offset: offset ?? undefined,
+          with_payload: true,
+          with_vector: true,
+        });
+        if (res.points.length > 0) {
+          await this.client.upsert(to, {
+            wait: true,
+            points: res.points.map((p) => {
+              const payload = (p.payload ?? {}) as { content?: string };
+              const dense = Array.isArray(p.vector)
+                ? (p.vector as number[])
+                : ((p.vector as Record<string, unknown>)?.[''] as number[]);
+              const sparse = payload.content ? buildSparseVector(payload.content) : null;
+              return {
+                id: p.id,
+                vector: sparse ? { '': dense, [SPARSE_NAME]: sparse } : { '': dense },
+                payload: p.payload as Record<string, unknown>,
+              };
+            }),
+          });
+          copied += res.points.length;
+        }
+        if (!res.next_page_offset) break;
+        offset = res.next_page_offset as string | number;
+      }
+      return copied;
+    };
+
+    // Phase 1: copy old -> tmp (tmp already has the sparse config).
+    await this.client.deleteCollection(tmpName).catch(() => {});
+    await this.client.createCollection(tmpName, collectionConfig);
+    const migrated = await copy(this.collectionName, tmpName);
+
+    // Phase 2: recreate the real collection with sparse and copy back.
+    await this.client.deleteCollection(this.collectionName);
+    this.initialized = false;
+    this.sparseEnabled = false;
+    await this.initialize(); // recreates with sparse config + payload indexes
+    await copy(tmpName, this.collectionName);
+    await this.client.deleteCollection(tmpName).catch(() => {});
+
+    this.sparseEnabled = true;
+    return { migrated, alreadyHybrid: false };
+  }
+
   async searchSimilar(
     memoryId: MemoryId,
     limit: number = 10,
@@ -269,16 +424,9 @@ export class QdrantAdapter {
 
     const pointId = this.memoryIdToPointId(memoryId);
 
-    const filter: Record<string, unknown> | undefined = namespace
-      ? {
-          must: [
-            {
-              key: 'namespace',
-              match: { value: namespace },
-            },
-          ],
-        }
-      : undefined;
+    // Similar-search excludes invalidated (superseded) facts by default — both
+    // the UI "similar" view and the resolution engine want current candidates.
+    const filter = this.buildFilter(namespace ? { namespace } : {});
 
     const searchResult = await this.client.recommend(this.collectionName, {
       positive: [pointId],

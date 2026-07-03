@@ -183,6 +183,11 @@ services:
       - LLM_API_KEY=${LLM_API_KEY:-}
       - LLM_BASE_URL=${LLM_BASE_URL:-}
       - LLM_TIMEOUT_MS=${LLM_TIMEOUT_MS:-}
+      # Optional cross-encoder reranker (TEI-compatible /rerank endpoint, e.g. a
+      # local text-embeddings-inference sidecar). OFF unless RERANK_URL is set.
+      - RERANK_URL=${RERANK_URL:-}
+      - RERANK_MODEL=${RERANK_MODEL:-}
+      - RERANK_API_KEY=${RERANK_API_KEY:-}
       # Requests/min across data-plane routes (defaults to the license tier's
       # limit; set 0 or off to disable on your own deployment).
       - API_RATE_LIMIT=${API_RATE_LIMIT:-}
