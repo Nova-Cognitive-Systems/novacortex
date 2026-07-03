@@ -59,6 +59,25 @@ plus its foundation.
   typed relation graph rank slightly higher — LLM-free, log-scaled edge degree.
 - **Deterministic temporal query normalization** (`parseTemporal: true`):
   "yesterday", "last week", "3 days ago" → `createdAfter` filter, no LLM involved.
+- **Progressive-disclosure wakeup**: MCP `memory_wakeup` accepts `depth: "index"` — a
+  ~150-token one-line-per-memory index (`<id-suffix> [<type><salience>] <gist>`) to
+  bootstrap coding-agent sessions cheaply; drill down with `memory_search`/
+  `memory_recall`. Wakeup L2 now uses real (hybrid/semantic) retrieval.
+- **Explainable recall**: search option `explain: true` attaches a per-result `trace`
+  (retrieval mode, index score, salience, graph boost, recency blend, rerank score,
+  supersession state) on REST `/search` and MCP `memory_search` — answers *why was
+  this retrieved*.
+- **MCP `memory_update`** (content/tags/entities/salience) with automatic re-embedding
+  on content changes.
+- **SDK parity**: Python SDK gains `update`, `relate`/`relations`, `current`,
+  `ingest`(+`ingest_status`); JS SDK gains `memories.current`/`ingest`/`ingestStatus`.
+- **`@novacortex/claude-code-hook`**: new package — a Claude Code SessionEnd hook that
+  captures your coding sessions into NovaCortex via `/memories/ingest` (async, no
+  session latency; pairs with `local-ai` for a fully-local pipeline).
+- **`@novacortex/mcp`**: the MCP server is npx-packaged (`novacortex-mcp` bin).
+- **LongMemEval_S benchmark harness** (`scripts/benchmark/longmemeval/`): reproducible
+  two-configuration evaluation (substrate vs intelligence) with fixed reader/judge,
+  per-category metrics, retrieval recall, latency and token reporting.
 - **Local-AI compose profile**: `docker compose --profile local-ai up -d`
   starts an Ollama sidecar (default `nomic-embed-text`; add `qwen3:8b` for the
   intelligence layer via `OLLAMA_PULL`) so semantic search AND memory intelligence run
