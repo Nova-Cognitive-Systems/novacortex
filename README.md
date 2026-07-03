@@ -44,14 +44,17 @@ cd novacortex
 
 # 1. Generate strong secrets into .env
 ./scripts/gen-env.sh
+#    For fully-local semantic search (no cloud, bundled Ollama sidecar):
+#    ./scripts/gen-env.sh --local-embeddings
 
 # 2. (generic Docker host) keep data next to the repo; (Unraid) use appdata:
 #    edit .env -> APPDATA=./data            (generic)
 #    edit .env -> APPDATA=/mnt/user/appdata/novacortex   (Unraid)
-#    Optional: set OPENAI_API_KEY for semantic search.
+#    Optional: set OPENAI_API_KEY for hosted (OpenAI) embeddings instead.
 
 # 3. Start the stack (pulls pinned multi-arch images from GHCR)
-docker compose -f docker-compose.unraid.yml up -d
+docker compose up -d
+#    with local embeddings: docker compose --profile local-embeddings up -d
 
 # 4. Grab the one-time bootstrap code from the logs
 docker logs novacortex-api 2>&1 | grep -A1 "Bootstrap code"
@@ -66,10 +69,19 @@ you're in. The REST API is at **http://localhost:3001** (Swagger at `/docs`).
 ## Privacy & embeddings
 
 NovaCortex stores and serves all memory data **on your own infrastructure**. Semantic
-search is **off by default**; it activates only when you set `OPENAI_API_KEY`, at which
-point memory text is sent to OpenAI to compute embeddings. For **fully local** embeddings,
-point `OPENAI_BASE_URL` at any OpenAI-compatible server (e.g. Ollama or LiteLLM) and set
-`EMBEDDING_MODEL` accordingly. Without a key, search falls back to local substring matching.
+search activates in one of two ways:
+
+- **Fully local (recommended for the privacy-first path):** start the stack with the
+  `local-embeddings` compose profile (`./scripts/gen-env.sh --local-embeddings`, then
+  `docker compose --profile local-embeddings up -d`). An Ollama sidecar computes
+  embeddings on your host — no memory text ever leaves your infrastructure.
+- **Hosted:** set `OPENAI_API_KEY`, at which point memory text is sent to OpenAI (or any
+  OpenAI-compatible server you point `OPENAI_BASE_URL` at) to compute embeddings.
+
+Without either, search falls back to local substring matching — the API logs this at
+startup and `/health` (plus the Settings page) shows the active search mode, so a silent
+degrade is visible. A mismatch between the embedding model's dimension and
+`QDRANT_VECTOR_SIZE` fails startup loudly instead of silently storing nothing.
 
 ## Use it from an agent (MCP)
 
@@ -109,11 +121,12 @@ Full developer/deploy docs live in [`docs/novacortex-docs`](./docs/novacortex-do
 
 ## Deployment variants
 
-- **`docker-compose.unraid.yml`** — supported self-host path (Unraid + any Docker host
-  via `APPDATA`). Pulls pinned GHCR images, secure-by-default.
+- **`docker-compose.yml`** — supported self-host path for any Docker host. Pulls pinned
+  GHCR images, secure-by-default, optional `local-embeddings` profile (Ollama sidecar).
+- **`docker-compose.unraid.yml`** — the same stack with Unraid appdata defaults.
 - **`docker-compose.dev.yml`** — local development (builds from source, hot-reload).
-- **`docker-compose.yml`** — ⚠️ experimental Traefik/Let's-Encrypt variant, **not** part
-  of v1 (needs a `traefik/` config tree that isn't shipped yet).
+- **`docker-compose.traefik.yml`** — ⚠️ experimental Traefik/Let's-Encrypt variant, **not**
+  part of v1 (needs a `traefik/` config tree that isn't shipped yet).
 
 ## Licensing & tiers
 

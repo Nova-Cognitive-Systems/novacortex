@@ -2,6 +2,7 @@
  * Auth middleware — token extraction, scope enforcement, rate limiting.
  */
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
+import { createHash } from 'crypto';
 import { tokenService, type TokenRecord } from '../services/token-service.js';
 
 declare global {
@@ -107,29 +108,65 @@ setInterval(() => {
   }
 }, 60_000).unref?.();
 
+/** Take one slot from the keyed bucket; sends the 429 and returns false when exhausted. */
+function consumeBucket(key: string, perMinute: number, res: Response, hint?: string): boolean {
+  const now = Date.now();
+  const bucket = rateBuckets.get(key);
+  if (!bucket || bucket.resetAt < now) {
+    rateBuckets.set(key, { count: 1, resetAt: now + 60_000 });
+    return true;
+  }
+  if (bucket.count >= perMinute) {
+    const retryAfter = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
+    res.setHeader('Retry-After', String(retryAfter));
+    res.status(429).json({
+      error: 'rate_limited',
+      message: 'Too many requests',
+      hint: hint ?? `Retry after ${retryAfter} seconds`,
+    });
+    return false;
+  }
+  bucket.count += 1;
+  return true;
+}
+
 /** In-memory per-IP rate limiter. */
 export function rateLimit(opts: { perMinute: number }): RequestHandler {
   return (req: Request, res: Response, next: NextFunction) => {
-    const ip = resolveClientIp(req);
-    const now = Date.now();
-    const bucket = rateBuckets.get(ip);
-    if (!bucket || bucket.resetAt < now) {
-      rateBuckets.set(ip, { count: 1, resetAt: now + 60_000 });
-      next();
-      return;
+    if (consumeBucket(`ip:${resolveClientIp(req)}`, opts.perMinute, res)) next();
+  };
+}
+
+/**
+ * License-tier request limiter (requests/minute across the data-plane routes),
+ * keyed per bearer token (per-IP for unauthenticated requests). The per-minute
+ * budget comes from the active license tier at request time, so activating a
+ * Pro key raises the limit without a restart. Self-hosters can override or
+ * disable via API_RATE_LIMIT (a number, or 0/off to disable) — this is an ops
+ * guardrail and an honest implementation of the advertised tier feature, not
+ * metering: storage and retrieval are never quota'd.
+ */
+export function tierRateLimit(getPerMinute: () => number): RequestHandler {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const override = process.env['API_RATE_LIMIT'];
+    let perMinute: number;
+    if (override !== undefined && override !== '') {
+      if (override === 'off' || override === '0') return next();
+      const parsed = parseInt(override, 10);
+      if (!Number.isFinite(parsed) || parsed <= 0) return next();
+      perMinute = parsed;
+    } else {
+      perMinute = getPerMinute();
     }
-    if (bucket.count >= opts.perMinute) {
-      const retryAfter = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
-      res.setHeader('Retry-After', String(retryAfter));
-      res.status(429).json({
-        error: 'rate_limited',
-        message: 'Too many requests',
-        hint: `Retry after ${retryAfter} seconds`,
-      });
-      return;
-    }
-    bucket.count += 1;
-    next();
+    if (!Number.isFinite(perMinute) || perMinute <= 0) return next();
+
+    const token = extractToken(req);
+    const key = token
+      ? `tok:${createHash('sha256').update(token).digest('hex').slice(0, 16)}`
+      : `ip:${resolveClientIp(req)}`;
+    const hint =
+      'Tier request limit reached. Upgrade your license for a higher limit, or set API_RATE_LIMIT to override on your own deployment.';
+    if (consumeBucket(key, perMinute, res, hint)) next();
   };
 }
 

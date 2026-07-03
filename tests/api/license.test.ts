@@ -65,6 +65,35 @@ describe('License (ed25519)', () => {
     expect(svc.validateKey(lic.key).valid).toBe(false);
   });
 
+  it('exposes licensee email and expiry from the signed payload', () => {
+    // The payload stores exp in unix SECONDS, so sub-second precision is dropped.
+    const exp = new Date(Math.floor((Date.now() + 7 * 24 * 3600 * 1000) / 1000) * 1000);
+    const lic = svc.generateKey('Owner@Example.com', 'pro', { expiresAt: exp });
+    const v = svc.validateKey(lic.key);
+    expect(v.valid).toBe(true);
+    expect(v.email).toBe('owner@example.com');
+    expect(v.expiresAt).toBe(exp.toISOString());
+  });
+
+  it('activateKey persists a valid key with payload email and tier features', () => {
+    const lic = svc.generateKey('buyer@example.com', 'pro');
+    const result = svc.activateKey(lic.key);
+    expect(result.success).toBe(true);
+    expect(result.license?.tier).toBe('pro');
+    expect(result.license?.email).toBe('buyer@example.com');
+    expect(result.license?.features.federation).toBe(true);
+    expect(result.license?.features.api_rate_limit).toBe(1000);
+    expect(svc.getCurrentTier().tier).toBe('pro');
+    expect(svc.getApiRateLimit()).toBe(1000);
+  });
+
+  it('activateKey rejects an invalid key without changing state', () => {
+    const before = svc.getCurrentTier().tier;
+    const result = svc.activateKey('nclic.AAAA.BBBB');
+    expect(result.success).toBe(false);
+    expect(svc.getCurrentTier().tier).toBe(before);
+  });
+
   it('keys do not validate under a different public key', () => {
     const lic = svc.generateKey('a@b.com', 'pro');
     const other = crypto.generateKeyPairSync('ed25519');

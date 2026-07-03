@@ -13,9 +13,11 @@ This guide covers every deployment scenario: local development, single-server pr
 
 ```
 novacortex/
-├── docker-compose.yml               # Base compose file (development defaults)
-├── docker-compose.dev.yml           # Development overrides (hot reload, debug ports)
+├── docker-compose.yml               # Supported self-host stack (pinned GHCR images)
+├── docker-compose.unraid.yml        # Same stack with Unraid appdata defaults
+├── docker-compose.dev.yml           # Development stack (builds from source, hot reload)
 ├── docker-compose.dokploy.yml       # Dokploy-compatible production compose
+├── docker-compose.traefik.yml       # Experimental Traefik/TLS variant (unsupported)
 ├── .env.example                     # Annotated environment template
 ├── scripts/
 │   ├── deploy.sh                    # Production deployment helper
@@ -44,13 +46,13 @@ cp .env.example .env
 
 Edit `.env` and set the required values (see [Configuration Reference](./configuration.md)).
 
-### 2. Start with development overrides
+### 2. Start the development stack
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+docker compose -f docker-compose.dev.yml up
 ```
 
-This command merges the base compose file with the development overrides. The API runs with `nodemon` watching `packages/api/src`, and the web UI runs with `next dev`. Changes to source files are reflected without restarting containers.
+The development stack is self-contained (it does not merge with the production compose file). The API runs with `nodemon` watching `packages/api/src`, and the web UI runs with `next dev`. Changes to source files are reflected without restarting containers.
 
 ### 3. Useful development commands
 

@@ -88,5 +88,5 @@ jobs:
           - ghcr.io/${OWNER}/novacortex-web:${VERSION}
 
           Install: set NOVACORTEX_VERSION=${VERSION} in .env (scripts/gen-env.sh) and
-          run \`docker compose -f docker-compose.unraid.yml up -d\`."
+          run \`docker compose up -d\`."
           gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes "$notes" --verify-tag

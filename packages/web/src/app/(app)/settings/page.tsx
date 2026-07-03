@@ -10,6 +10,8 @@ import {
   Check,
   Crown,
   Shield,
+  Search,
+  AlertTriangle,
 } from "lucide-react";
 import {
   useStats,
@@ -74,6 +76,40 @@ export default function SettingsPage() {
     hasLicense: boolean;
     features?: { federation: boolean };
   } | null>(null);
+  const [licenseKeyInput, setLicenseKeyInput] = useState("");
+  const [activating, setActivating] = useState(false);
+  const [activationResult, setActivationResult] = useState<{
+    ok: boolean;
+    message: string;
+  } | null>(null);
+
+  // Search / embeddings status (from the public /health endpoint)
+  const [searchStatus, setSearchStatus] = useState<{
+    mode: "semantic" | "text";
+    embeddings: {
+      status: "ok" | "disabled" | "unreachable" | "dimension_mismatch";
+      model: string;
+      dimension?: number;
+      expectedDimension: number;
+      error?: string;
+    };
+  } | null>(null);
+
+  const fetchSearchStatus = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/health`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.search) setSearchStatus(data.search);
+      }
+    } catch (e) {
+      console.error("Failed to fetch search status:", e);
+    }
+  }, [API_URL]);
+
+  useEffect(() => {
+    fetchSearchStatus();
+  }, [fetchSearchStatus]);
 
   // Fetch license info
   const fetchLicenseInfo = useCallback(async () => {
@@ -99,6 +135,44 @@ export default function SettingsPage() {
   useEffect(() => {
     fetchLicenseInfo();
   }, [fetchLicenseInfo]);
+
+  const handleActivateLicense = useCallback(async () => {
+    const key = licenseKeyInput.trim();
+    if (!key) return;
+    setActivating(true);
+    setActivationResult(null);
+    try {
+      const token = getAuthToken();
+      const res = await fetch(`${API_URL}/license/activate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ key }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        setActivationResult({ ok: true, message: data.message || "License activated." });
+        setLicenseKeyInput("");
+        fetchLicenseInfo();
+      } else if (res.status === 401 || res.status === 403) {
+        setActivationResult({
+          ok: false,
+          message: "Activation requires an admin token — sign in with your admin token first.",
+        });
+      } else {
+        setActivationResult({
+          ok: false,
+          message: data.message || data.error || "Invalid license key.",
+        });
+      }
+    } catch {
+      setActivationResult({ ok: false, message: "Could not reach the API." });
+    } finally {
+      setActivating(false);
+    }
+  }, [licenseKeyInput, API_URL, fetchLicenseInfo]);
 
   const handleCopyApiUrl = useCallback(async () => {
     await navigator.clipboard.writeText(customApiUrl);
@@ -255,10 +329,118 @@ export default function SettingsPage() {
           </div>
 
 
-          <p className="text-xs text-muted-foreground">
-            License is configured via the <code className="bg-muted px-1 py-0.5 rounded text-xs">LICENSE_KEY</code> environment variable.
-          </p>
+          {/* Activate a key directly from the UI (admin token required) */}
+          <div className="space-y-2">
+            <Label htmlFor="license-key">Activate a license key</Label>
+            <div className="flex gap-2">
+              <Input
+                id="license-key"
+                value={licenseKeyInput}
+                onChange={(e) => setLicenseKeyInput(e.target.value)}
+                placeholder="nclic...."
+                className="font-mono"
+                autoComplete="off"
+              />
+              <Button
+                onClick={handleActivateLicense}
+                disabled={!licenseKeyInput.trim() || activating}
+              >
+                {activating ? "Activating..." : "Activate"}
+              </Button>
+            </div>
+            {activationResult && (
+              <p
+                className={`text-xs ${activationResult.ok ? "text-green-600" : "text-red-600"}`}
+              >
+                {activationResult.message}
+              </p>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Alternatively set the <code className="bg-muted px-1 py-0.5 rounded text-xs">LICENSE_KEY</code> environment
+              variable (takes precedence on restart).
+            </p>
+          </div>
         </CardContent>
+      </Card>
+
+      {/* Search mode / embeddings status — makes a silent substring-fallback visible */}
+      <Card
+        className={
+          searchStatus && searchStatus.mode !== "semantic" ? "border-amber-500/50" : ""
+        }
+        data-hint="search-status-section"
+      >
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Search className="h-5 w-5" />
+            Search Mode
+            {searchStatus && (
+              <Badge variant={searchStatus.mode === "semantic" ? "default" : "destructive"}>
+                {searchStatus.mode === "semantic" ? "SEMANTIC" : "SUBSTRING FALLBACK"}
+              </Badge>
+            )}
+          </CardTitle>
+          <CardDescription>
+            {searchStatus
+              ? searchStatus.mode === "semantic"
+                ? "Vector search is active — queries are embedded and matched by meaning."
+                : "Semantic search is NOT active — queries fall back to plain substring matching."
+              : "Checking embedding provider..."}
+          </CardDescription>
+        </CardHeader>
+        {searchStatus && (
+          <CardContent className="space-y-3">
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="rounded-lg border p-3 text-center">
+                <p className="text-xs text-muted-foreground">Embedding Provider</p>
+                <p className="text-lg font-bold capitalize">
+                  {searchStatus.embeddings.status === "ok"
+                    ? "Connected"
+                    : searchStatus.embeddings.status.replace("_", " ")}
+                </p>
+              </div>
+              <div className="rounded-lg border p-3 text-center">
+                <p className="text-xs text-muted-foreground">Model</p>
+                <p className="text-lg font-bold font-mono truncate" title={searchStatus.embeddings.model}>
+                  {searchStatus.embeddings.model}
+                </p>
+              </div>
+              <div className="rounded-lg border p-3 text-center">
+                <p className="text-xs text-muted-foreground">Dimension</p>
+                <p className="text-lg font-bold">
+                  {searchStatus.embeddings.dimension ?? "—"} / {searchStatus.embeddings.expectedDimension}
+                </p>
+              </div>
+            </div>
+            {searchStatus.embeddings.status === "disabled" && (
+              <p className="flex items-start gap-2 text-xs text-muted-foreground">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
+                No embedding provider configured. For fully local semantic search, start the
+                stack with the <code className="bg-muted px-1 py-0.5 rounded">local-embeddings</code> compose
+                profile, or set <code className="bg-muted px-1 py-0.5 rounded">OPENAI_API_KEY</code> (and
+                optionally <code className="bg-muted px-1 py-0.5 rounded">OPENAI_BASE_URL</code> for any
+                OpenAI-compatible server).
+              </p>
+            )}
+            {searchStatus.embeddings.status === "unreachable" && (
+              <p className="flex items-start gap-2 text-xs text-muted-foreground">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
+                Embedding endpoint unreachable{searchStatus.embeddings.error ? `: ${searchStatus.embeddings.error}` : ""}.
+                Search is degraded until it recovers.
+              </p>
+            )}
+            {searchStatus.embeddings.status === "dimension_mismatch" && (
+              <p className="flex items-start gap-2 text-xs text-red-600">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                {searchStatus.embeddings.error}
+              </p>
+            )}
+            <Button variant="outline" size="sm" onClick={() => fetchSearchStatus()}>
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Re-check
+            </Button>
+          </CardContent>
+        )}
       </Card>
 
       <AccessTokensPanel />

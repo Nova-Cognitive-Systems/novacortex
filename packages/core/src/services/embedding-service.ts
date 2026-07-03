@@ -54,6 +54,44 @@ export class EmbeddingService {
   }
 
   /**
+   * Probe the embedding endpoint with a tiny request and report the actual
+   * vector dimension it produces. Used at startup to detect a mismatch between
+   * the model's output and the configured Qdrant vector size BEFORE garbage
+   * vectors get stored (a wrong dimension makes every upsert fail silently in
+   * the background). Distinguishes "disabled" (no key), "unreachable" (endpoint
+   * down / model still loading) and "ok".
+   */
+  async probe(): Promise<
+    | { status: 'disabled' }
+    | { status: 'unreachable'; error: string }
+    | { status: 'ok'; dimension: number }
+  > {
+    if (!this.apiKey) return { status: 'disabled' };
+    try {
+      const response = await fetch(`${this.baseUrl}/embeddings`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ model: this.model, input: ['dimension probe'] }),
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) {
+        return { status: 'unreachable', error: `embedding endpoint returned ${response.status}` };
+      }
+      const data = (await response.json()) as { data?: { embedding: number[] }[] };
+      const vec = data.data?.[0]?.embedding;
+      if (!vec || vec.length === 0) {
+        return { status: 'unreachable', error: 'embedding endpoint returned no vector' };
+      }
+      return { status: 'ok', dimension: vec.length };
+    } catch (e) {
+      return { status: 'unreachable', error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  /**
    * Embed a single text. Returns null if embeddings are disabled (no key) or the
    * request fails — callers should treat null as "fall back to text search".
    */

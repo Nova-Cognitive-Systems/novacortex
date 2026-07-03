@@ -458,9 +458,12 @@ export class MemoryService {
       limit: (options.limit ?? 10) * 2, // Get more for fusion
     });
 
-    // Get text search results from SurrealDB
+    // Get text search results from SurrealDB. The query MUST be forwarded here:
+    // without it the "text leg" degenerates into a top-effective-salience browse
+    // and the fusion silently stops being hybrid.
     const textResults = await this.surrealdb.search({
       ...options,
+      query,
       limit: (options.limit ?? 10) * 2,
     });
 

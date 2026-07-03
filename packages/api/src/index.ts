@@ -17,7 +17,7 @@ import { getLicenseService, type LicenseTier, type FederationRule } from './serv
 import { knowledgeService } from './services/knowledge.js';
 import { apiKeyService, type ApiKeyConfig } from './services/legacy-api-keys.js';
 import { tokenService } from './services/token-service.js';
-import { requireScopes } from './middleware/auth.js';
+import { requireScopes, tierRateLimit } from './middleware/auth.js';
 import { installSetupRoute } from './routes/setup.js';
 import { WebhookService, setWebhookService } from './services/webhooks.js';
 import { installWebhookRoutes } from './routes/webhooks.js';
@@ -232,6 +232,59 @@ interface HealthCache {
 const healthCache: HealthCache = { data: null, cachedAt: 0 };
 const HEALTH_CACHE_TTL_MS = 5 * 1000; // 5 seconds
 
+/**
+ * Embedding / search-mode status, surfaced in /health so operators (and the
+ * Settings UI) can SEE whether search is running semantically or silently
+ * degraded to substring matching — previously the fallback was invisible.
+ */
+interface EmbeddingStatus {
+  status: 'disabled' | 'unreachable' | 'ok' | 'dimension_mismatch';
+  model: string;
+  dimension?: number;
+  expectedDimension: number;
+  error?: string;
+  checkedAt: string;
+}
+let embeddingStatus: EmbeddingStatus | null = null;
+const EMBEDDING_STATUS_TTL_MS = 60 * 1000;
+
+async function checkEmbeddingStatus(): Promise<EmbeddingStatus> {
+  const embeddingService = memoryService.getEmbeddingService();
+  const probe = await embeddingService.probe();
+  const expectedDimension = config.qdrant.vectorSize ?? 1536;
+  const base = {
+    model: embeddingService.getModel(),
+    expectedDimension,
+    checkedAt: new Date().toISOString(),
+  };
+  if (probe.status === 'disabled') {
+    embeddingStatus = { ...base, status: 'disabled' };
+  } else if (probe.status === 'unreachable') {
+    embeddingStatus = { ...base, status: 'unreachable', error: probe.error };
+  } else if (probe.dimension !== expectedDimension) {
+    embeddingStatus = {
+      ...base,
+      status: 'dimension_mismatch',
+      dimension: probe.dimension,
+      error: `model produces ${probe.dimension}-dim vectors but QDRANT_VECTOR_SIZE is ${expectedDimension}`,
+    };
+  } else {
+    embeddingStatus = { ...base, status: 'ok', dimension: probe.dimension };
+  }
+  return embeddingStatus;
+}
+
+/** Cached view for /health; re-probes when stale or previously not ok. */
+async function getEmbeddingStatus(): Promise<EmbeddingStatus> {
+  const stale =
+    !embeddingStatus ||
+    Date.now() - new Date(embeddingStatus.checkedAt).getTime() > EMBEDDING_STATUS_TTL_MS;
+  if (stale || embeddingStatus!.status === 'unreachable') {
+    return checkEmbeddingStatus();
+  }
+  return embeddingStatus!;
+}
+
 // Health check endpoint
 app.get('/health', async (_req: Request, res: Response) => {
   try {
@@ -250,11 +303,16 @@ app.get('/health', async (_req: Request, res: Response) => {
 
     await memoryService.connect();
     const stats = await memoryService.getStats();
+    const embStatus = await getEmbeddingStatus();
 
     const healthData = {
       status: 'healthy',
       timestamp: new Date().toISOString(),
       stats,
+      search: {
+        mode: embStatus.status === 'ok' ? 'semantic' : 'text',
+        embeddings: embStatus,
+      },
       docs: '/docs',
       openapi: '/openapi.json',
     };
@@ -387,12 +445,19 @@ app.get('/stats', requireScopes('memories:read'), async (_req: Request, res: Res
   }
 });
 
-// Mount memories router
-app.use('/memories', createMemoriesRouter(memoryService));
-
-
 // License-based namespace limits
 const licenseService = getLicenseService();
+
+// License-tier request limiter across the data plane (per token, falls back to
+// per IP). Advertised as the tiers' api_rate_limit feature; overridable via
+// API_RATE_LIMIT for self-hosters. Auth/setup routes keep their own limits.
+app.use(
+  ['/memories', '/knowledge', '/buckets', '/processor'],
+  tierRateLimit(() => licenseService.getApiRateLimit())
+);
+
+// Mount memories router
+app.use('/memories', createMemoriesRouter(memoryService));
 
 function getMaxNamespaces(): number {
   return licenseService.getNamespaceLimit();
@@ -710,37 +775,21 @@ app.post('/license/activate', requireScopes('admin:*'), (req: Request, res: Resp
       return;
     }
 
-    const validation = licenseService.validateKey(key);
+    const result = licenseService.activateKey(key);
 
-    if (!validation.valid) {
+    if (!result.success || !result.license) {
       res.status(400).json({
         error: 'Invalid license key',
-        message: validation.message,
+        message: result.message,
       });
       return;
     }
 
-    // Save the license
-    const license = {
-      key,
-      email: 'activated@memory-stack.local', // Will be set properly from registration
-      tier: validation.tier,
-      createdAt: new Date().toISOString(),
-      features: {
-        maxNamespaces: validation.maxNamespaces,
-        priority_support: validation.tier === 'pro' || validation.tier === 'enterprise',
-        api_rate_limit: validation.tier === 'enterprise' ? 10000 : validation.tier === 'pro' ? 1000 : 100,
-        federation: validation.tier === 'pro' || validation.tier === 'enterprise',
-      },
-    };
-
-    licenseService.saveLicense(license);
-
     res.json({
       success: true,
-      tier: validation.tier,
-      maxNamespaces: validation.maxNamespaces,
-      message: `License activated! You now have ${validation.maxNamespaces} namespaces.`,
+      tier: result.license.tier,
+      maxNamespaces: result.license.features.maxNamespaces,
+      message: `License activated! You now have ${result.license.features.maxNamespaces} namespaces.`,
     });
   } catch (error) {
     res.status(500).json({
@@ -1707,6 +1756,41 @@ async function start() {
     }
 
     logger.info('Connected successfully.');
+
+    // Embedding dimension guard: a model whose vectors don't match
+    // QDRANT_VECTOR_SIZE makes every background upsert fail silently, so a
+    // confirmed mismatch is a hard misconfiguration — fail loudly instead of
+    // running a deployment that quietly stores nothing. An UNREACHABLE endpoint
+    // (e.g. an Ollama sidecar still pulling its model) only degrades to
+    // substring search and is reported via /health, not fatal.
+    // Escape hatch: EMBEDDING_DIM_CHECK=off.
+    if (process.env['EMBEDDING_DIM_CHECK'] !== 'off') {
+      const embStatus = await checkEmbeddingStatus();
+      if (embStatus.status === 'dimension_mismatch') {
+        logger.error(
+          `FATAL: embedding dimension mismatch — ${embStatus.error}. ` +
+            `Fix EMBEDDING_MODEL or QDRANT_VECTOR_SIZE (a new size needs a fresh Qdrant collection), ` +
+            `or set EMBEDDING_DIM_CHECK=off to bypass.`
+        );
+        process.exit(1);
+      }
+      if (embStatus.status === 'unreachable') {
+        logger.warn(
+          `Embedding endpoint unreachable (${embStatus.error}) — semantic search degraded to substring matching until it recovers. See /health.`
+        );
+      }
+      if (embStatus.status === 'disabled') {
+        logger.warn(
+          'No embedding provider configured (OPENAI_API_KEY unset) — search runs in SUBSTRING mode, not semantic. ' +
+            'For fully local semantic search, run the local-embeddings compose profile or point OPENAI_BASE_URL at any OpenAI-compatible server.'
+        );
+      }
+      if (embStatus.status === 'ok') {
+        logger.info(
+          `Semantic search active: model=${embStatus.model} dim=${embStatus.dimension}`
+        );
+      }
+    }
 
     // Start memory processor if enabled
     if (process.env['PROCESSOR_ENABLED'] !== 'false') {
