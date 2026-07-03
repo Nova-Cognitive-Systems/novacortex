@@ -1,36 +1,73 @@
-# ============================================
-# NovaCortex - Dokploy Deployment
-# ============================================
-# Dokploy manages reverse proxy (Traefik) externally.
-# This compose only defines the application services.
-#
-# Usage:
-#   1. Create a "Compose" project in Dokploy
-#   2. Point to this file or paste contents
-#   3. Set environment variables in Dokploy UI:
-#      - SURREALDB_USER, SURREALDB_PASS (required)
-#      - JWT_SECRET, NEXTAUTH_SECRET (required)
-#      - REDIS_PASSWORD (required)
-#      - DOMAIN (required - your domain)
-#      - LICENSE_KEY (optional - Pro/Enterprise license)
-#      - OPENAI_API_KEY, ANTHROPIC_API_KEY (optional)
-#   4. Add domains in Dokploy:
-#      - Web: your-domain.com → port 3000
-#      - API: api.your-domain.com → port 3001
-# ============================================
+# ============================================================================
+# EXPERIMENTAL — NOT part of the supported v1 self-host release.
+# This Traefik + Let's Encrypt production variant requires a ./traefik/ config
+# tree (traefik.yml + dynamic middlewares) that is not shipped yet, so it will
+# NOT bring up a working reverse proxy / TLS out of the box. For a supported
+# install use docker-compose.unraid.yml (works on Unraid and any Docker host
+# by setting APPDATA). Completing this variant is tracked as a fast-follow.
+# ============================================================================
 
 networks:
-  novacortex:
+  novacortex-internal:
+    driver: bridge
+    internal: true
+  novacortex-external:
     driver: bridge
 
 volumes:
   surrealdb-data:
   qdrant-data:
   redis-data:
+  traefik-certs:
 
 services:
   # ============================================
-  # API Service (Express.js)
+  # Traefik Reverse Proxy
+  # ============================================
+  traefik:
+    image: traefik:v3.0
+    container_name: novacortex-traefik
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - novacortex-external
+      - novacortex-internal
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - CF_API_EMAIL=${CLOUDFLARE_EMAIL:-}
+      - CF_API_KEY=${CLOUDFLARE_API_KEY:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/traefik.yml:/traefik.yml:ro
+      - ./traefik/dynamic:/etc/traefik/dynamic:ro
+      - traefik-certs:/letsencrypt
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.entrypoints=websecure"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.${DOMAIN}`)"
+      - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.traefik.service=api@internal"
+      - "traefik.http.routers.traefik.middlewares=auth@file"
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+
+  # ============================================
+  # API Service (Node.js)
   # ============================================
   api:
     build:
@@ -40,9 +77,8 @@ services:
     container_name: novacortex-api
     restart: unless-stopped
     networks:
-      - novacortex
-    ports:
-      - "3001:3001"
+      - novacortex-internal
+      - novacortex-external
     environment:
       - NODE_ENV=production
       - PORT=3001
@@ -52,20 +88,14 @@ services:
       - SURREALDB_USER=${SURREALDB_USER}
       - SURREALDB_PASS=${SURREALDB_PASS}
       - QDRANT_URL=http://qdrant:6333
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
       - JWT_SECRET=${JWT_SECRET}
       - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-7d}
-      - LICENSE_KEY=${LICENSE_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
-      - EMBEDDING_DIM_CHECK=${EMBEDDING_DIM_CHECK:-}
-      - QDRANT_VECTOR_SIZE=${QDRANT_VECTOR_SIZE:-1536}
-      - API_RATE_LIMIT=${API_RATE_LIMIT:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      - CORS_ORIGINS=${CORS_ORIGINS:-https://${DOMAIN}}
       - LOG_LEVEL=${LOG_LEVEL:-info}
-      - PROCESSOR_ENABLED=${PROCESSOR_ENABLED:-true}
     depends_on:
       surrealdb:
         condition: service_healthy
@@ -73,6 +103,15 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.api.entrypoints=websecure"
+      - "traefik.http.routers.api.rule=Host(`api.${DOMAIN}`)"
+      - "traefik.http.routers.api.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.api.middlewares=api-ratelimit@file,security-headers@file,cors@file"
+      - "traefik.http.services.api.loadbalancer.server.port=3001"
+      - "traefik.http.services.api.loadbalancer.healthcheck.path=/health"
+      - "traefik.http.services.api.loadbalancer.healthcheck.interval=30s"
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
       interval: 30s
@@ -83,7 +122,7 @@ services:
       resources:
         limits:
           cpus: "2"
-          memory: 4G
+          memory: 3G
         reservations:
           cpus: "0.5"
           memory: 1G
@@ -101,28 +140,33 @@ services:
       context: .
       dockerfile: packages/web/Dockerfile
       target: production
-      args:
-        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-https://api.${DOMAIN}}
-        - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-wss://api.${DOMAIN}}
     container_name: novacortex-web
     restart: unless-stopped
     networks:
-      - novacortex
-    ports:
-      - "3000:3000"
+      - novacortex-internal
+      - novacortex-external
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-https://api.${DOMAIN}}
-      - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-wss://api.${DOMAIN}}
-      - API_INTERNAL_URL=http://novacortex-api:3001
-      - NEXTAUTH_URL=${NEXTAUTH_URL:-https://${DOMAIN}}
+      - NEXT_PUBLIC_API_URL=https://api.${DOMAIN}
+      - NEXT_PUBLIC_WS_URL=wss://api.${DOMAIN}
+      - API_INTERNAL_URL=http://api:3001
+      - NEXTAUTH_URL=https://${DOMAIN}
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
     depends_on:
       api:
         condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.web.entrypoints=websecure"
+      - "traefik.http.routers.web.rule=Host(`${DOMAIN}`)"
+      - "traefik.http.routers.web.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.web.middlewares=security-headers@file"
+      - "traefik.http.services.web.loadbalancer.server.port=3000"
+      - "traefik.http.services.web.loadbalancer.healthcheck.path=/api/health"
+      - "traefik.http.services.web.loadbalancer.healthcheck.interval=30s"
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -142,15 +186,14 @@ services:
         max-file: "5"
 
   # ============================================
-  # SurrealDB (Document + Graph Database)
+  # SurrealDB
   # ============================================
   surrealdb:
     image: surrealdb/surrealdb:v2.2
     container_name: novacortex-surrealdb
     restart: unless-stopped
-    user: root
     networks:
-      - novacortex
+      - novacortex-internal
     command:
       - start
       - --log=info
@@ -172,7 +215,7 @@ services:
           cpus: "2"
           memory: 2G
         reservations:
-          cpus: "0.25"
+          cpus: "0.5"
           memory: 512M
     logging:
       driver: "json-file"
@@ -181,22 +224,24 @@ services:
         max-file: "3"
 
   # ============================================
-  # Qdrant (Vector Database)
+  # Qdrant Vector Database
   # ============================================
   qdrant:
     image: qdrant/qdrant:v1.14.0
     container_name: novacortex-qdrant
     restart: unless-stopped
     networks:
-      - novacortex
+      - novacortex-internal
     environment:
+      # Only set QDRANT__SERVICE__API_KEY in .env if you want to enable auth
       - QDRANT__SERVICE__ENABLE_TLS=false
       - QDRANT__STORAGE__STORAGE_PATH=/qdrant/storage
       - QDRANT__STORAGE__SNAPSHOTS_PATH=/qdrant/snapshots
     volumes:
       - qdrant-data:/qdrant/storage
+      - ./config/qdrant:/qdrant/config:ro
     healthcheck:
-      test: ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/localhost/6333' || exit 1"]
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333 && echo ok'"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -207,7 +252,7 @@ services:
           cpus: "2"
           memory: 2G
         reservations:
-          cpus: "0.25"
+          cpus: "0.5"
           memory: 512M
     logging:
       driver: "json-file"
@@ -216,14 +261,14 @@ services:
         max-file: "3"
 
   # ============================================
-  # Redis (Cache + Sessions)
+  # Redis Cache
   # ============================================
   redis:
     image: redis:7-alpine
     container_name: novacortex-redis
     restart: unless-stopped
     networks:
-      - novacortex
+      - novacortex-internal
     command:
       - redis-server
       - --appendonly

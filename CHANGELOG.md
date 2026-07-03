@@ -3,6 +3,39 @@
 All notable changes to NovaCortex are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/); this project uses semantic versioning.
 
+## [Unreleased]
+
+Foundation for v1.3 "Intelligence" (Phase A).
+
+### Added
+- **Local-embeddings compose profile**: `docker compose --profile local-embeddings up -d`
+  starts an Ollama sidecar (default model `nomic-embed-text`) so semantic search runs
+  fully on your own host — no memory text ever leaves your infrastructure.
+  `scripts/gen-env.sh --local-embeddings` preconfigures the required env in one step.
+- **Embedding dimension guard**: at startup the API probes the embedding endpoint and
+  **fails loudly** when the model's vector dimension doesn't match `QDRANT_VECTOR_SIZE`
+  (previously every background upsert failed silently). An unreachable endpoint only
+  degrades to substring search and is reported. Escape hatch: `EMBEDDING_DIM_CHECK=off`.
+- **Search-mode visibility**: `/health` now reports the active search mode
+  (`semantic` vs `text`) plus embedding provider status; the Settings page shows it
+  prominently — a silent substring fallback is no longer invisible.
+- **License activation in the UI**: paste an `nclic.…` key on the Settings page
+  (admin token required) instead of env-only activation. Activated licenses now carry
+  the licensee email/expiry from the signed key payload.
+- **Tier request limits enforced**: the advertised `api_rate_limit` tier feature
+  (100/1000/10000 req/min) is now wired to a per-token limiter across the data-plane
+  routes. Self-hosters can raise or disable it via `API_RATE_LIMIT` (`off`/`0`
+  disables) — storage and retrieval remain unmetered.
+
+### Fixed
+- **`hybridSearch` text leg ignored the query**: the query string was never forwarded
+  to the SurrealDB search, so the "text" contribution silently degenerated into a
+  top-salience browse and fused unrelated memories into hybrid results.
+- **Compose naming footgun**: `docker-compose.yml` is now the supported GHCR-image
+  stack (the experimental Traefik variant moved to `docker-compose.traefik.yml`), so a
+  plain `docker compose up -d` works. Dev scripts use the self-contained
+  `docker-compose.dev.yml` directly.
+
 ## [1.2.1] — 2026-06-25
 
 Public site + docs (Phase 4).

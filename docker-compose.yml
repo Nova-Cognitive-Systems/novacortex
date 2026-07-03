@@ -1,274 +1,87 @@
-# ============================================================================
-# EXPERIMENTAL — NOT part of the supported v1 self-host release.
-# This Traefik + Let's Encrypt production variant requires a ./traefik/ config
-# tree (traefik.yml + dynamic middlewares) that is not shipped yet, so it will
-# NOT bring up a working reverse proxy / TLS out of the box. For a supported
-# install use docker-compose.unraid.yml (works on Unraid and any Docker host
-# by setting APPDATA). Completing this variant is tracked as a fast-follow.
-# ============================================================================
+# ============================================
+# NovaCortex — Supported Self-Host Stack (any Docker host)
+# Uses pre-built multi-arch images from GHCR.
+#
+# Usage:
+#   1. ./scripts/gen-env.sh                      # generates .env with strong random secrets
+#      (add --local-embeddings for fully-local semantic search via the Ollama sidecar)
+#   2. Edit .env: set OPENAI_API_KEY (optional, for hosted embeddings) and APPDATA
+#   3. docker compose up -d
+#      (with local embeddings: docker compose --profile local-embeddings up -d)
+#   4. Read the bootstrap code from logs: docker logs novacortex-api | grep Bootstrap
+#
+# Images: ghcr.io/nova-cognitive-systems/novacortex-{api,web}
+# Data is bind-mounted under ${APPDATA} (default ./data) so it survives image rebuilds.
+#
+# Variants: docker-compose.unraid.yml (Unraid appdata defaults — keep the two files
+# in sync), docker-compose.dev.yml (build from source, hot reload),
+# docker-compose.traefik.yml (experimental TLS/reverse-proxy, unsupported).
+# ============================================
 
 networks:
-  novacortex-internal:
-    driver: bridge
-    internal: true
-  novacortex-external:
+  novacortex:
     driver: bridge
 
 volumes:
-  surrealdb-data:
-  qdrant-data:
-  redis-data:
-  traefik-certs:
+  ollama-models:
 
 services:
-  # ============================================
-  # Traefik Reverse Proxy
-  # ============================================
-  traefik:
-    image: traefik:v3.0
-    container_name: novacortex-traefik
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    networks:
-      - novacortex-external
-      - novacortex-internal
-    ports:
-      - "80:80"
-      - "443:443"
-    environment:
-      - CF_API_EMAIL=${CLOUDFLARE_EMAIL:-}
-      - CF_API_KEY=${CLOUDFLARE_API_KEY:-}
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./traefik/traefik.yml:/traefik.yml:ro
-      - ./traefik/dynamic:/etc/traefik/dynamic:ro
-      - traefik-certs:/letsencrypt
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.traefik.entrypoints=websecure"
-      - "traefik.http.routers.traefik.rule=Host(`traefik.${DOMAIN}`)"
-      - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.traefik.service=api@internal"
-      - "traefik.http.routers.traefik.middlewares=auth@file"
-    healthcheck:
-      test: ["CMD", "traefik", "healthcheck", "--ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 256M
-        reservations:
-          cpus: "0.1"
-          memory: 64M
 
   # ============================================
-  # API Service (Node.js)
-  # ============================================
-  api:
-    build:
-      context: .
-      dockerfile: packages/api/Dockerfile
-      target: production
-    container_name: novacortex-api
-    restart: unless-stopped
-    networks:
-      - novacortex-internal
-      - novacortex-external
-    environment:
-      - NODE_ENV=production
-      - PORT=3001
-      - SURREALDB_URL=ws://surrealdb:8000/rpc
-      - SURREALDB_NAMESPACE=${SURREALDB_NAMESPACE:-novacortex}
-      - SURREALDB_DATABASE=${SURREALDB_DATABASE:-production}
-      - SURREALDB_USER=${SURREALDB_USER}
-      - SURREALDB_PASS=${SURREALDB_PASS}
-      - QDRANT_URL=http://qdrant:6333
-      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
-      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
-      - JWT_SECRET=${JWT_SECRET}
-      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-7d}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - CORS_ORIGINS=${CORS_ORIGINS:-https://${DOMAIN}}
-      - LOG_LEVEL=${LOG_LEVEL:-info}
-    depends_on:
-      surrealdb:
-        condition: service_healthy
-      qdrant:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.api.entrypoints=websecure"
-      - "traefik.http.routers.api.rule=Host(`api.${DOMAIN}`)"
-      - "traefik.http.routers.api.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.api.middlewares=api-ratelimit@file,security-headers@file,cors@file"
-      - "traefik.http.services.api.loadbalancer.server.port=3001"
-      - "traefik.http.services.api.loadbalancer.healthcheck.path=/health"
-      - "traefik.http.services.api.loadbalancer.healthcheck.interval=30s"
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    deploy:
-      resources:
-        limits:
-          cpus: "2"
-          memory: 3G
-        reservations:
-          cpus: "0.5"
-          memory: 1G
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "5"
-
-  # ============================================
-  # Web Service (Next.js)
-  # ============================================
-  web:
-    build:
-      context: .
-      dockerfile: packages/web/Dockerfile
-      target: production
-    container_name: novacortex-web
-    restart: unless-stopped
-    networks:
-      - novacortex-internal
-      - novacortex-external
-    environment:
-      - NODE_ENV=production
-      - PORT=3000
-      - NEXT_PUBLIC_API_URL=https://api.${DOMAIN}
-      - NEXT_PUBLIC_WS_URL=wss://api.${DOMAIN}
-      - API_INTERNAL_URL=http://api:3001
-      - NEXTAUTH_URL=https://${DOMAIN}
-      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
-    depends_on:
-      api:
-        condition: service_healthy
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.web.entrypoints=websecure"
-      - "traefik.http.routers.web.rule=Host(`${DOMAIN}`)"
-      - "traefik.http.routers.web.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.web.middlewares=security-headers@file"
-      - "traefik.http.services.web.loadbalancer.server.port=3000"
-      - "traefik.http.services.web.loadbalancer.healthcheck.path=/api/health"
-      - "traefik.http.services.web.loadbalancer.healthcheck.interval=30s"
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    deploy:
-      resources:
-        limits:
-          cpus: "1"
-          memory: 512M
-        reservations:
-          cpus: "0.25"
-          memory: 128M
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "5"
-
-  # ============================================
-  # SurrealDB
+  # SurrealDB — Primary Database
   # ============================================
   surrealdb:
     image: surrealdb/surrealdb:v2.2
     container_name: novacortex-surrealdb
     restart: unless-stopped
     networks:
-      - novacortex-internal
+      - novacortex
     command:
       - start
       - --log=info
-      - --user=${SURREALDB_USER}
-      - --pass=${SURREALDB_PASS}
+      - --user=${SURREALDB_USER:-root}
+      - --pass=${SURREALDB_PASS:?set SURREALDB_PASS in .env (run scripts/gen-env.sh)}
       - --bind=0.0.0.0:8000
       - rocksdb:/data/database
     volumes:
-      - surrealdb-data:/data
+      - ${APPDATA:-./data}/surrealdb:/data
     healthcheck:
       test: ["CMD", "/surreal", "isready", "--conn", "http://localhost:8000"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 30s
-    deploy:
-      resources:
-        limits:
-          cpus: "2"
-          memory: 2G
-        reservations:
-          cpus: "0.5"
-          memory: 512M
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
 
   # ============================================
-  # Qdrant Vector Database
+  # Qdrant — Vector Database
   # ============================================
   qdrant:
     image: qdrant/qdrant:v1.14.0
     container_name: novacortex-qdrant
     restart: unless-stopped
     networks:
-      - novacortex-internal
+      - novacortex
     environment:
-      # Only set QDRANT__SERVICE__API_KEY in .env if you want to enable auth
       - QDRANT__SERVICE__ENABLE_TLS=false
       - QDRANT__STORAGE__STORAGE_PATH=/qdrant/storage
-      - QDRANT__STORAGE__SNAPSHOTS_PATH=/qdrant/snapshots
     volumes:
-      - qdrant-data:/qdrant/storage
-      - ./config/qdrant:/qdrant/config:ro
+      - ${APPDATA:-./data}/qdrant:/qdrant/storage
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333 && echo ok'"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 30s
-    deploy:
-      resources:
-        limits:
-          cpus: "2"
-          memory: 2G
-        reservations:
-          cpus: "0.5"
-          memory: 512M
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
 
   # ============================================
-  # Redis Cache
+  # Redis — Session / Rate-Limit Cache
   # ============================================
   redis:
     image: redis:7-alpine
     container_name: novacortex-redis
     restart: unless-stopped
     networks:
-      - novacortex-internal
+      - novacortex
     command:
       - redis-server
       - --appendonly
@@ -278,25 +91,135 @@ services:
       - --maxmemory-policy
       - allkeys-lru
       - --requirepass
-      - ${REDIS_PASSWORD}
+      - ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env (run scripts/gen-env.sh)}
     volumes:
-      - redis-data:/data
+      - ${APPDATA:-./data}/redis:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+
+  # ============================================
+  # Ollama — OPTIONAL local embedding sidecar (profile: local-embeddings)
+  # Fully-local semantic search: no memory text ever leaves this host.
+  # Enable with: docker compose --profile local-embeddings up -d
+  # and set in .env (gen-env.sh --local-embeddings writes these):
+  #   OPENAI_BASE_URL=http://ollama:11434/v1
+  #   OPENAI_API_KEY=ollama            # any non-empty value; Ollama ignores it
+  #   EMBEDDING_MODEL=nomic-embed-text
+  #   QDRANT_VECTOR_SIZE=768           # nomic-embed-text dimension (fresh collection!)
+  # ============================================
+  ollama:
+    image: ollama/ollama:${OLLAMA_VERSION:-latest}
+    container_name: novacortex-ollama
+    restart: unless-stopped
+    profiles: ["local-embeddings"]
+    networks:
+      - novacortex
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  # One-shot: pulls the embedding model into the ollama volume on first start.
+  ollama-init:
+    image: ollama/ollama:${OLLAMA_VERSION:-latest}
+    container_name: novacortex-ollama-init
+    profiles: ["local-embeddings"]
+    networks:
+      - novacortex
+    restart: "no"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    entrypoint: ["/bin/sh", "-c", "ollama pull ${EMBEDDING_MODEL:-nomic-embed-text}"]
+
+  # ============================================
+  # NovaCortex API  (port 3001)
+  # ============================================
+  api:
+    image: ghcr.io/nova-cognitive-systems/novacortex-api:${NOVACORTEX_VERSION:-1.2.1}
+    container_name: novacortex-api
+    restart: unless-stopped
+    networks:
+      - novacortex
+    ports:
+      - "${API_PORT:-3001}:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - SURREALDB_URL=ws://surrealdb:8000/rpc
+      - SURREALDB_NAMESPACE=${SURREALDB_NAMESPACE:-novacortex}
+      - SURREALDB_DATABASE=${SURREALDB_DATABASE:-production}
+      - SURREALDB_USER=${SURREALDB_USER:-root}
+      - SURREALDB_PASS=${SURREALDB_PASS:?set SURREALDB_PASS in .env}
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-}
+      - QDRANT_VECTOR_SIZE=${QDRANT_VECTOR_SIZE:-1536}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379
+      # Embeddings are OFF unless OPENAI_API_KEY is set. To keep data fully local,
+      # use the local-embeddings profile above or point OPENAI_BASE_URL at any
+      # OpenAI-compatible local server (Ollama/LM Studio/vLLM/LiteLLM).
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
+      - EMBEDDING_DIM_CHECK=${EMBEDDING_DIM_CHECK:-}
+      # Requests/min across data-plane routes (defaults to the license tier's
+      # limit; set 0 or off to disable on your own deployment).
+      - API_RATE_LIMIT=${API_RATE_LIMIT:-}
+      # Set to your UI origin(s) for a locked-down CORS allowlist.
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      # Optional Pro/Enterprise license. Empty = free tier.
+      - LICENSE_KEY=${LICENSE_KEY:-}
+    depends_on:
+      surrealdb:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 384M
-        reservations:
-          cpus: "0.1"
-          memory: 64M
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "5m"
-        max-file: "3"
+      start_period: 40s
+
+  # ============================================
+  # NovaCortex Web UI  (port 3000)
+  # ============================================
+  web:
+    image: ghcr.io/nova-cognitive-systems/novacortex-web:${NOVACORTEX_VERSION:-1.2.1}
+    container_name: novacortex-web
+    restart: unless-stopped
+    networks:
+      - novacortex
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+      # The browser reaches the API via the Web UI's own same-origin /api/v1 proxy,
+      # which forwards to API_INTERNAL_URL — so no public API URL needs to be set.
+      - API_INTERNAL_URL=http://api:3001
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

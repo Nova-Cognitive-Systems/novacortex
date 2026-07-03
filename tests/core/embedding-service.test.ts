@@ -45,3 +45,58 @@ describe('EmbeddingService base URL resolution', () => {
     }
   });
 });
+
+describe('EmbeddingService probe (dimension guard)', () => {
+  const origFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = origFetch;
+  });
+
+  it('reports disabled without an api key', async () => {
+    const prev = process.env['OPENAI_API_KEY'];
+    delete process.env['OPENAI_API_KEY'];
+    try {
+      const svc = new EmbeddingService({ apiKey: '' });
+      expect(await svc.probe()).toEqual({ status: 'disabled' });
+    } finally {
+      if (prev !== undefined) process.env['OPENAI_API_KEY'] = prev;
+    }
+  });
+
+  it('reports the actual vector dimension on success', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ data: [{ embedding: [0.1, 0.2, 0.3], index: 0 }] }),
+    })) as unknown as typeof fetch;
+
+    const svc = new EmbeddingService({ apiKey: 'sk-test' });
+    expect(await svc.probe()).toEqual({ status: 'ok', dimension: 3 });
+  });
+
+  it('reports unreachable on network failure and non-2xx responses', async () => {
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error('ECONNREFUSED');
+    }) as unknown as typeof fetch;
+    const svc = new EmbeddingService({ apiKey: 'sk-test' });
+    const down = await svc.probe();
+    expect(down.status).toBe('unreachable');
+
+    globalThis.fetch = vi.fn(async () => ({
+      ok: false,
+      status: 503,
+      json: async () => ({}),
+    })) as unknown as typeof fetch;
+    const busy = await svc.probe();
+    expect(busy.status).toBe('unreachable');
+  });
+
+  it('reports unreachable when the endpoint returns no vector', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ data: [] }),
+    })) as unknown as typeof fetch;
+    const svc = new EmbeddingService({ apiKey: 'sk-test' });
+    const res = await svc.probe();
+    expect(res.status).toBe('unreachable');
+  });
+});

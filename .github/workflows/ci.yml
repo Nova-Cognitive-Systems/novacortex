@@ -64,6 +64,7 @@ jobs:
       - name: Start API
         run: |
           SURREALDB_URL=ws://localhost:8000/rpc PORT=3001 NODE_ENV=test PROCESSOR_ENABLED=false \
+            API_RATE_LIMIT=off \
             npx tsx packages/api/src/index.ts > /tmp/api.log 2>&1 &
           for i in $(seq 1 60); do
             if curl -sf http://localhost:3001/health >/dev/null; then echo "API ready"; exit 0; fi

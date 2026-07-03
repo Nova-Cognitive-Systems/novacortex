@@ -51,6 +51,10 @@ export interface LicenseValidation {
   tier: LicenseTier;
   maxNamespaces: number;
   message?: string;
+  /** Licensee email from the signed key payload (valid keys only). */
+  email?: string;
+  /** Expiry from the signed key payload, if the key expires. */
+  expiresAt?: string;
 }
 
 // Namespace limits per tier
@@ -143,12 +147,7 @@ export class LicenseService {
       email: this.currentLicense?.email || 'env@license.local',
       tier: validation.tier,
       createdAt: this.currentLicense?.createdAt || new Date().toISOString(),
-      features: {
-        maxNamespaces: validation.maxNamespaces,
-        priority_support: validation.tier === 'pro' || validation.tier === 'enterprise',
-        api_rate_limit: validation.tier === 'enterprise' ? 10000 : validation.tier === 'pro' ? 1000 : 100,
-        federation: validation.tier === 'pro' || validation.tier === 'enterprise',
-      },
+      features: tierFeatures(validation.tier),
     };
 
     this.currentLicense = license;
@@ -250,7 +249,30 @@ export class LicenseService {
       valid: true,
       tier,
       maxNamespaces: TIER_LIMITS[tier],
+      ...(payload.email ? { email: payload.email } : {}),
+      ...(payload.exp ? { expiresAt: new Date(payload.exp * 1000).toISOString() } : {}),
     };
+  }
+
+  /**
+   * Validate and persist a license key — the UI/API activation path (the env
+   * alternative is LICENSE_KEY). Email/expiry come from the signed payload.
+   */
+  activateKey(key: string): { success: boolean; license?: License; message?: string } {
+    const validation = this.validateKey(key);
+    if (!validation.valid) {
+      return { success: false, message: validation.message };
+    }
+    const license: License = {
+      key,
+      email: validation.email ?? 'activated@memory-stack.local',
+      tier: validation.tier,
+      createdAt: new Date().toISOString(),
+      ...(validation.expiresAt ? { expiresAt: validation.expiresAt } : {}),
+      features: tierFeatures(validation.tier),
+    };
+    this.saveLicense(license);
+    return { success: true, license };
   }
 
   /**
@@ -324,6 +346,11 @@ export class LicenseService {
   getNamespaceLimit(): number {
     const tier = this.getCurrentTier();
     return tier.maxNamespaces;
+  }
+
+  /** Requests/minute allowed by the active tier (the advertised api_rate_limit feature). */
+  getApiRateLimit(): number {
+    return tierFeatures(this.getCurrentTier().tier).api_rate_limit;
   }
 
   // ============ FEDERATION METHODS (Pro+ Feature) ============
