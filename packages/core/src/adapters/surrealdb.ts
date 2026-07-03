@@ -36,6 +36,7 @@ interface SurrealMemoryRecord {
   createdAt: string | DateTime;
   accessedAt: string | DateTime;
   version: number;
+  invalidatedAt?: string | DateTime | null;
   metadata: {
     source: {
       type: string;
@@ -169,6 +170,7 @@ export class SurrealDBAdapter {
       createdAt: this.toDate(record.createdAt),
       accessedAt: this.toDate(record.accessedAt),
       version: record.version,
+      ...(record.invalidatedAt ? { invalidatedAt: this.toDate(record.invalidatedAt) } : {}),
       metadata: {
         source: {
           type: record.metadata.source.type as
@@ -461,6 +463,10 @@ export class SurrealDBAdapter {
         weight: s.weight,
         extractedAt: new DateTime(s.extractedAt),
       }));
+    }
+
+    if (input.invalidatedAt !== undefined) {
+      updates['invalidatedAt'] = input.invalidatedAt ? new DateTime(input.invalidatedAt) : null;
     }
 
     if (input.salience !== undefined) {

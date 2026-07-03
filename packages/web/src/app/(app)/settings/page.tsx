@@ -416,7 +416,7 @@ export default function SettingsPage() {
               <p className="flex items-start gap-2 text-xs text-muted-foreground">
                 <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
                 No embedding provider configured. For fully local semantic search, start the
-                stack with the <code className="bg-muted px-1 py-0.5 rounded">local-embeddings</code> compose
+                stack with the <code className="bg-muted px-1 py-0.5 rounded">local-ai</code> compose
                 profile, or set <code className="bg-muted px-1 py-0.5 rounded">OPENAI_API_KEY</code> (and
                 optionally <code className="bg-muted px-1 py-0.5 rounded">OPENAI_BASE_URL</code> for any
                 OpenAI-compatible server).

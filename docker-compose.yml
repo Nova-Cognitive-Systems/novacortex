@@ -103,20 +103,23 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
 
   # ============================================
-  # Ollama — OPTIONAL local embedding sidecar (profile: local-embeddings)
-  # Fully-local semantic search: no memory text ever leaves this host.
-  # Enable with: docker compose --profile local-embeddings up -d
-  # and set in .env (gen-env.sh --local-embeddings writes these):
+  # Ollama — OPTIONAL local AI sidecar (profile: local-ai)
+  # Fully-local semantic search AND memory intelligence: no memory text ever
+  # leaves this host. Enable with: docker compose --profile local-ai up -d
+  # and set in .env (gen-env.sh --local-embeddings or --local-ai writes these):
   #   OPENAI_BASE_URL=http://ollama:11434/v1
   #   OPENAI_API_KEY=ollama            # any non-empty value; Ollama ignores it
   #   EMBEDDING_MODEL=nomic-embed-text
   #   QDRANT_VECTOR_SIZE=768           # nomic-embed-text dimension (fresh collection!)
+  # and additionally for the intelligence layer (--local-ai):
+  #   LLM_MODEL=qwen3:8b               # fact extraction + update resolution
+  #   OLLAMA_PULL=nomic-embed-text qwen3:8b
   # ============================================
   ollama:
     image: ollama/ollama:${OLLAMA_VERSION:-latest}
     container_name: novacortex-ollama
     restart: unless-stopped
-    profiles: ["local-embeddings"]
+    profiles: ["local-ai"]
     networks:
       - novacortex
     volumes:
@@ -128,11 +131,11 @@ services:
       retries: 10
       start_period: 20s
 
-  # One-shot: pulls the embedding model into the ollama volume on first start.
+  # One-shot: pulls the configured models into the ollama volume on first start.
   ollama-init:
     image: ollama/ollama:${OLLAMA_VERSION:-latest}
     container_name: novacortex-ollama-init
-    profiles: ["local-embeddings"]
+    profiles: ["local-ai"]
     networks:
       - novacortex
     restart: "no"
@@ -141,7 +144,7 @@ services:
         condition: service_healthy
     environment:
       - OLLAMA_HOST=http://ollama:11434
-    entrypoint: ["/bin/sh", "-c", "ollama pull ${EMBEDDING_MODEL:-nomic-embed-text}"]
+    entrypoint: ["/bin/sh", "-c", "for m in ${OLLAMA_PULL:-nomic-embed-text}; do ollama pull $$m; done"]
 
   # ============================================
   # NovaCortex API  (port 3001)
@@ -174,6 +177,13 @@ services:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
       - EMBEDDING_DIM_CHECK=${EMBEDDING_DIM_CHECK:-}
+      # Intelligence layer (fact extraction + update resolution). OFF unless
+      # LLM_MODEL is set; works with any OpenAI-compatible endpoint. LLM_* fall
+      # back to the OPENAI_* pair when unset.
+      - LLM_MODEL=${LLM_MODEL:-}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_BASE_URL=${LLM_BASE_URL:-}
+      - LLM_TIMEOUT_MS=${LLM_TIMEOUT_MS:-}
       # Requests/min across data-plane routes (defaults to the license tier's
       # limit; set 0 or off to disable on your own deployment).
       - API_RATE_LIMIT=${API_RATE_LIMIT:-}

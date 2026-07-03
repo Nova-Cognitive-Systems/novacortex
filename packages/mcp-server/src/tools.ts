@@ -7,6 +7,9 @@ import {
   MemoryService,
   MemoryType,
   RelationType,
+  LLMService,
+  IntelligenceService,
+  resolveLLMConfig,
   type Memory,
   type SearchResult,
   type PortableMemory,
@@ -27,6 +30,7 @@ import {
   SessionEndSchema,
   MemoryStatusSchema,
   MemoryWakeupSchema,
+  MemoryIngestSchema,
   type MemoryStoreInput,
   type MemorySearchInput,
   type MemoryRecallInput,
@@ -39,6 +43,7 @@ import {
   type SessionEndInput,
   type MemoryStatusInput,
   type MemoryWakeupInput,
+  type MemoryIngestInput,
 } from './schemas.js';
 
 // Convert Zod schema to JSON Schema for MCP
@@ -157,10 +162,15 @@ export interface ToolResult {
 export class ToolHandler {
   private memoryService: MemoryService;
   private sessionManager: SessionManager;
+  private intelligence: IntelligenceService;
 
   constructor(memoryService: MemoryService) {
     this.memoryService = memoryService;
-    this.sessionManager = new SessionManager(memoryService);
+    // Intelligence layer: active only when LLM_MODEL (+ key/base URL) is set —
+    // same env contract as the REST API. Without it, memory_ingest reports
+    // unavailable and session_end falls back to the heuristic extraction.
+    this.intelligence = new IntelligenceService(memoryService, new LLMService(resolveLLMConfig()));
+    this.sessionManager = new SessionManager(memoryService, this.intelligence);
   }
 
   getToolDefinitions(): ToolDefinition[] {
@@ -234,6 +244,12 @@ export class ToolHandler {
           'Load tiered memory context for a specific topic. Returns L1 (top salience) + L2 (topic-filtered) memories combined, capped at ~900 tokens total for efficient context injection.',
         inputSchema: zodToJsonSchema(MemoryWakeupSchema),
       },
+      {
+        name: 'memory_ingest',
+        description:
+          'Distill conversation messages into discrete memories automatically (LLM fact extraction + conflict resolution with typed edges). Use instead of memory_store when you have raw conversation turns rather than a curated fact. Requires a configured LLM (LLM_MODEL).',
+        inputSchema: zodToJsonSchema(MemoryIngestSchema),
+      },
     ];
   }
 
@@ -264,6 +280,8 @@ export class ToolHandler {
           return await this.handleMemoryStatus(args);
         case 'memory_wakeup':
           return await this.handleMemoryWakeup(args);
+        case 'memory_ingest':
+          return await this.handleMemoryIngest(args);
         default:
           return this.error(`Unknown tool: ${name}`);
       }
@@ -627,6 +645,47 @@ export class ToolHandler {
         content: m.content,
         createdAt: m.createdAt,
       })),
+    });
+  }
+
+  private async handleMemoryIngest(args: unknown): Promise<ToolResult> {
+    const input = MemoryIngestSchema.parse(args) as MemoryIngestInput;
+    walLog('memory_ingest', args);
+
+    if (!this.intelligence.isEnabled()) {
+      return this.error(
+        'Intelligence layer disabled: set LLM_MODEL (plus LLM_API_KEY / LLM_BASE_URL for any OpenAI-compatible endpoint, incl. local Ollama). Use memory_store to store curated facts directly.'
+      );
+    }
+
+    if (input.dryRun) {
+      const facts = await this.intelligence.extractFacts(input.messages);
+      return this.success({ dryRun: true, count: facts.length, facts });
+    }
+
+    const result = await this.intelligence.ingest(input.messages, {
+      namespace: input.namespace,
+      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+      ...(input.agentId ? { agentId: input.agentId } : {}),
+      resolve: input.resolve,
+    });
+
+    return this.success({
+      ingested: true,
+      counts: {
+        facts: result.facts.length,
+        created: result.created.length,
+        duplicates: result.duplicates,
+        resolutions: result.resolutions.length,
+      },
+      created: result.created.map((m) => ({
+        id: m.id.id,
+        namespace: m.id.namespace,
+        type: m.memoryType,
+        salience: m.metadata.salience,
+        content: m.content,
+      })),
+      resolutions: result.resolutions,
     });
   }
 

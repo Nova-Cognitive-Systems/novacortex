@@ -10,8 +10,9 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import Busboy from 'busboy';
-import { MemoryService, MemoryType, resolveSurrealConfig, resolveQdrantConfig, resolveEmbeddingConfig } from '@memory-stack/core';
+import { MemoryService, MemoryType, LLMService, IntelligenceService, resolveSurrealConfig, resolveQdrantConfig, resolveEmbeddingConfig, resolveLLMConfig } from '@memory-stack/core';
 import { createMemoriesRouter } from './routes/memories.js';
+import { installIngestRoutes } from './routes/ingest.js';
 import { MemoryProcessor, DEFAULT_PROCESSOR_CONFIG, type ProcessorConfig, setProcessorInstance } from './services/processor.js';
 import { getLicenseService, type LicenseTier, type FederationRule } from './services/license.js';
 import { knowledgeService } from './services/knowledge.js';
@@ -131,6 +132,11 @@ const memoryService = new MemoryService({
   embedding: config.embedding,
 });
 
+// Intelligence layer (fact extraction + update resolution). Disabled unless an
+// LLM is explicitly configured via LLM_MODEL — graceful no-op otherwise.
+const llmService = new LLMService(resolveLLMConfig());
+const intelligenceService = new IntelligenceService(memoryService, llmService);
+
 // Initialize memory processor
 const memoryProcessor = new MemoryProcessor(memoryService, {
   relationDiscovery: {
@@ -183,7 +189,7 @@ app.use(cors(corsOrigins.length > 0 ? { origin: corsOrigins } : {}));
 app.use(requestLogger);
 app.use((req, res, next) => {
   // Large imports and file uploads need extended timeouts
-  const longPaths = ['/knowledge/upload', '/memories/import/chat', '/memories/import', '/memories/import/pmf'];
+  const longPaths = ['/knowledge/upload', '/memories/import/chat', '/memories/import', '/memories/import/pmf', '/memories/ingest'];
   const ms = longPaths.some(p => req.path.startsWith(p)) ? 300000 : 60000;
   timeoutMiddleware(ms)(req, res, next);
 });
@@ -312,6 +318,10 @@ app.get('/health', async (_req: Request, res: Response) => {
       search: {
         mode: embStatus.status === 'ok' ? 'semantic' : 'text',
         embeddings: embStatus,
+      },
+      intelligence: {
+        enabled: intelligenceService.isEnabled(),
+        model: intelligenceService.getModel() ?? null,
       },
       docs: '/docs',
       openapi: '/openapi.json',
@@ -455,6 +465,10 @@ app.use(
   ['/memories', '/knowledge', '/buckets', '/processor'],
   tierRateLimit(() => licenseService.getApiRateLimit())
 );
+
+// Conversation ingestion — MUST come before the memories router so
+// /memories/ingest/:jobId isn't captured by broader /memories patterns.
+installIngestRoutes(app, intelligenceService);
 
 // Mount memories router
 app.use('/memories', createMemoriesRouter(memoryService));
@@ -1782,7 +1796,7 @@ async function start() {
       if (embStatus.status === 'disabled') {
         logger.warn(
           'No embedding provider configured (OPENAI_API_KEY unset) — search runs in SUBSTRING mode, not semantic. ' +
-            'For fully local semantic search, run the local-embeddings compose profile or point OPENAI_BASE_URL at any OpenAI-compatible server.'
+            'For fully local semantic search, run the local-ai compose profile or point OPENAI_BASE_URL at any OpenAI-compatible server.'
         );
       }
       if (embStatus.status === 'ok') {
@@ -1790,6 +1804,12 @@ async function start() {
           `Semantic search active: model=${embStatus.model} dim=${embStatus.dimension}`
         );
       }
+    }
+
+    if (intelligenceService.isEnabled()) {
+      logger.info(`Intelligence layer active: model=${intelligenceService.getModel()} (fact extraction + update resolution)`);
+    } else {
+      logger.info('Intelligence layer disabled (set LLM_MODEL to enable fact extraction + update resolution; works with any OpenAI-compatible endpoint incl. local Ollama)');
     }
 
     // Start memory processor if enabled

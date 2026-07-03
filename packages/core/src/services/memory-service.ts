@@ -206,6 +206,13 @@ export class MemoryService {
     return memory;
   }
 
+  /** Exact-duplicate lookup by content (SHA-256 hash, per namespace). */
+  async findByContent(content: string, namespace: string): Promise<Memory | null> {
+    await this.ensureConnected();
+    const hash = createHash('sha256').update(content).digest('hex');
+    return this.surrealdb.findByHash(hash, namespace);
+  }
+
   async getMemory(id: MemoryId, includeRelations = false): Promise<Memory | null> {
     await this.ensureConnected();
 

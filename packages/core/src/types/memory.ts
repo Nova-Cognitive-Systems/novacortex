@@ -21,6 +21,12 @@ export interface MemoryCore {
   readonly createdAt: Date;
   readonly accessedAt: Date;
   readonly version: number;
+  /**
+   * Set when this memory stopped being the current truth (superseded by a newer
+   * fact). Append-only semantics: the memory is never deleted or rewritten —
+   * it is invalidated and stays queryable as history.
+   */
+  readonly invalidatedAt?: Date;
 }
 
 export enum MemoryType {
@@ -217,6 +223,12 @@ export interface UpdateMemoryInput {
   effectiveSalience?: number;
   /** Timestamp of the last decay recalculation (set alongside effectiveSalience). */
   lastDecayCalculation?: Date;
+  /**
+   * Mark the memory as no longer current (append-only supersession) or clear
+   * the mark with null. Set by the resolution engine when a newer memory
+   * supersedes this one.
+   */
+  invalidatedAt?: Date | null;
 }
 
 export interface SearchOptions {
@@ -246,4 +258,46 @@ export interface VectorSearchOptions extends SearchOptions {
 export interface SearchResult {
   memory: Memory;
   score?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Intelligence layer (fact extraction + update resolution)
+// ---------------------------------------------------------------------------
+
+/** One conversation turn handed to the ingestion pipeline. */
+export interface IngestMessage {
+  role: 'user' | 'assistant' | 'system' | 'tool';
+  content: string;
+  /** Optional speaker name (multi-party conversations). */
+  name?: string;
+  /** Optional ISO timestamp of the turn (improves temporal extraction). */
+  timestamp?: string;
+}
+
+/** A discrete fact distilled from a conversation by the extraction step. */
+export interface ExtractedFact {
+  /** Self-contained statement, understandable without the conversation. */
+  content: string;
+  memoryType: MemoryType;
+  tags: string[];
+  entities: Entity[];
+  /** 1..10 — how important this fact is to remember long-term. */
+  salience: number;
+  /** 0..1 — extraction confidence. */
+  confidence: number;
+}
+
+/** What the resolution step decided about a (new memory, existing memory) pair. */
+export type ResolutionDecision =
+  | 'supersedes' // the new memory is the current version of the old fact
+  | 'contradicts' // both claim to be true but conflict — flag, keep both
+  | 'duplicates' // same fact, differently worded
+  | 'related' // same topic, no conflict
+  | 'none';
+
+export interface ResolutionOutcome {
+  memory: MemoryId;
+  candidate: MemoryId;
+  decision: ResolutionDecision;
+  reason: string;
 }

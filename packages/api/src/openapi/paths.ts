@@ -417,6 +417,64 @@ registry.registerPath({
 
 registry.registerPath({
   method: 'post',
+  path: '/memories/ingest',
+  tags: ['Intelligence'],
+  summary: 'Distill conversation messages into memories (LLM fact extraction + append-only conflict resolution)',
+  description:
+    'Requires a configured LLM (LLM_MODEL; any OpenAI-compatible endpoint incl. local Ollama). ' +
+    'Async by default: returns 202 with a jobId (jobs are in-process, expire after 1h, not persisted across restarts). ' +
+    'wait=true runs synchronously; dryRun=true previews extracted facts without storing. ' +
+    'Resolution writes typed edges (supersedes/contradicts/same_as/related_to) and stamps invalidatedAt on superseded facts — nothing is deleted.',
+  security: bearer,
+  request: {
+    body: {
+      content: json(
+        z.object({
+          messages: z
+            .array(
+              z.object({
+                role: z.enum(['user', 'assistant', 'system', 'tool']),
+                content: z.string(),
+                name: z.string().optional(),
+                timestamp: z.string().optional(),
+              }),
+            )
+            .min(1),
+          namespace: z.string().optional().default('default'),
+          sessionId: z.string().optional(),
+          agentId: z.string().optional(),
+          dryRun: z.boolean().optional().default(false),
+          wait: z.boolean().optional().default(false),
+          resolve: z.boolean().optional().default(true),
+        }),
+      ),
+    },
+  },
+  responses: {
+    200: { description: 'Sync/dryRun result (facts, created memories, resolutions)', content: json(z.unknown()) },
+    202: { description: 'Job accepted (async default)', content: json(z.unknown()) },
+    400: err400,
+    401: err401,
+    503: { description: 'Intelligence layer disabled (no LLM configured)', content: json(z.unknown()) },
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/memories/ingest/{jobId}',
+  tags: ['Intelligence'],
+  summary: 'Ingest job status/result',
+  security: bearer,
+  request: { params: z.object({ jobId: z.string() }) },
+  responses: {
+    200: { description: 'Job status', content: json(z.unknown()) },
+    401: err401,
+    404: { description: 'Unknown or expired job', content: json(z.unknown()) },
+  },
+});
+
+registry.registerPath({
+  method: 'post',
   path: '/memories/embeddings/generate',
   tags: ['Import / Export'],
   summary: 'Generate OpenAI embeddings for memories that lack vectors (backfill)',

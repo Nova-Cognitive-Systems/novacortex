@@ -120,6 +120,22 @@ export const MemoryWakeupSchema = z.object({
   query: z.string().optional().describe('Optional topic query to pre-load relevant L2 context'),
 });
 
+export const IngestMessageSchema = z.object({
+  role: z.enum(['user', 'assistant', 'system', 'tool']).describe('Speaker role'),
+  content: z.string().describe('Message text'),
+  name: z.string().optional().describe('Optional speaker name'),
+  timestamp: z.string().optional().describe('Optional ISO timestamp of the turn'),
+});
+
+export const MemoryIngestSchema = z.object({
+  messages: z.array(IngestMessageSchema).describe('Conversation turns to distill into memories'),
+  namespace: z.string().default('default').describe('Namespace to store extracted memories in'),
+  sessionId: z.string().optional().describe('Session/conversation identifier for provenance'),
+  agentId: z.string().optional().describe('Agent identifier for provenance'),
+  dryRun: z.boolean().default(false).describe('Extract facts only — preview without storing'),
+  resolve: z.boolean().default(true).describe('Resolve stored facts against neighbors (typed edges, supersession)'),
+});
+
 // Type exports
 export type MemoryStoreInput = z.infer<typeof MemoryStoreSchema>;
 export type MemorySearchInput = z.infer<typeof MemorySearchSchema>;
@@ -133,3 +149,4 @@ export type SessionGetContextInput = z.infer<typeof SessionGetContextSchema>;
 export type SessionEndInput = z.infer<typeof SessionEndSchema>;
 export type MemoryStatusInput = z.infer<typeof MemoryStatusSchema>;
 export type MemoryWakeupInput = z.infer<typeof MemoryWakeupSchema>;
+export type MemoryIngestInput = z.infer<typeof MemoryIngestSchema>;

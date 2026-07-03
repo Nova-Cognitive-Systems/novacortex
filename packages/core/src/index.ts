@@ -15,6 +15,13 @@ export {
   EmbeddingService,
   type EmbeddingServiceConfig,
 } from './services/embedding-service.js';
+export { LLMService, type LLMServiceConfig } from './services/llm-service.js';
+export {
+  IntelligenceService,
+  type IngestOptions,
+  type IngestResult,
+  type ResolveOptions,
+} from './services/intelligence-service.js';
 
 // Connection management
 export {
@@ -40,4 +47,5 @@ export {
   resolveSurrealConfig,
   resolveQdrantConfig,
   resolveEmbeddingConfig,
+  resolveLLMConfig,
 } from './lib/env-config.js';

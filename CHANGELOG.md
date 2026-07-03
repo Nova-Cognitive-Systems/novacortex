@@ -5,13 +5,35 @@ All notable changes to NovaCortex are documented here. Format based on
 
 ## [Unreleased]
 
-Foundation for v1.3 "Intelligence" (Phase A).
+v1.3 "Intelligence": the LLM-driven memory intelligence layer (opt-in, local-first)
+plus its foundation.
 
 ### Added
-- **Local-embeddings compose profile**: `docker compose --profile local-embeddings up -d`
-  starts an Ollama sidecar (default model `nomic-embed-text`) so semantic search runs
+- **Memory intelligence layer** (opt-in via `LLM_MODEL`; works with any
+  OpenAI-compatible endpoint including fully-local Ollama — `LLM_API_KEY`/`LLM_BASE_URL`
+  fall back to the `OPENAI_*` pair):
+  - **Fact extraction**: `POST /memories/ingest {messages[]}` distills conversation
+    turns into discrete, self-contained memories with populated `memoryType`, `tags`,
+    `entities`, `salience` and `confidence`. Async by default (202 + job status at
+    `GET /memories/ingest/:jobId`) so writes never pay LLM latency; `wait=true` runs
+    synchronously, `dryRun=true` previews the facts without storing.
+  - **Update resolution, append-only ("provable memory")**: each new memory is judged
+    against its nearest neighbors (one small LLM decision per pair — designed for
+    small local models). Outcomes become TYPED EDGES: `supersedes` (+ an
+    `invalidatedAt` stamp on the outdated fact), `contradicts`, `same_as`, or
+    `related_to`. **Nothing is deleted or rewritten** — history stays queryable.
+  - **MCP `memory_ingest` tool** with the same pipeline; MCP `session_end` now uses
+    real LLM extraction (with the legacy length heuristic as fallback when no LLM is
+    configured).
+  - `/health` reports the intelligence status (`enabled`, `model`).
+- **`invalidatedAt`** on memories: append-only supersession marker, settable via the
+  update API; groundwork for point-in-time queries and read-path suppression.
+- **Local-AI compose profile**: `docker compose --profile local-ai up -d`
+  starts an Ollama sidecar (default `nomic-embed-text`; add `qwen3:8b` for the
+  intelligence layer via `OLLAMA_PULL`) so semantic search AND memory intelligence run
   fully on your own host — no memory text ever leaves your infrastructure.
-  `scripts/gen-env.sh --local-embeddings` preconfigures the required env in one step.
+  `scripts/gen-env.sh --local-embeddings` (search only) or `--local-ai` (search +
+  intelligence) preconfigures the required env in one step.
 - **Embedding dimension guard**: at startup the API probes the embedding endpoint and
   **fails loudly** when the model's vector dimension doesn't match `QDRANT_VECTOR_SIZE`
   (previously every background upsert failed silently). An unreachable endpoint only
