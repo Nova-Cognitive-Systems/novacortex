@@ -115,6 +115,56 @@ export interface SearchResponse {
   mode?: 'hybrid' | 'semantic' | 'text' | 'vector';
 }
 
+export interface IngestMessage {
+  role: 'user' | 'assistant' | 'system' | 'tool';
+  content: string;
+  name?: string;
+  timestamp?: string;
+}
+
+export interface IngestInput {
+  messages: IngestMessage[];
+  namespace?: string;
+  sessionId?: string;
+  agentId?: string;
+  /** Run synchronously and return the full result instead of a job. */
+  wait?: boolean;
+  /** Extract facts only — preview without storing. */
+  dryRun?: boolean;
+  /** Resolve stored facts against neighbors (default true). */
+  resolve?: boolean;
+}
+
+export interface IngestResponse {
+  /** Async mode: job handle. */
+  jobId?: string;
+  status?: string;
+  statusUrl?: string;
+  /** Sync/dryRun mode: extraction results. */
+  facts?: unknown[];
+  created?: unknown[];
+  duplicates?: number;
+  resolutions?: unknown[];
+  counts?: { facts: number; created: number; duplicates: number; resolutions: number };
+}
+
+export interface IngestJobStatus {
+  jobId: string;
+  status: 'pending' | 'processing' | 'done' | 'error';
+  namespace: string;
+  createdAt: string;
+  finishedAt?: string;
+  result?: IngestResponse;
+  error?: string;
+}
+
+export interface CurrentFactResponse {
+  current: Memory;
+  superseded: boolean;
+  hops: number;
+  chain: Array<{ id: MemoryId; content: string; createdAt: string; invalidatedAt: string | null }>;
+}
+
 export interface CreateRelationInput {
   fromMemoryId: string;
   fromNamespace: string;

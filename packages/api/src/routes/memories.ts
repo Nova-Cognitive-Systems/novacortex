@@ -90,6 +90,9 @@ const VectorSearchSchema = z.object({
   scoreThreshold: z.number().min(0).max(1).optional(),
   includeInvalidated: z.boolean().optional(),
   asOf: z.coerce.date().optional(),
+  rerank: z.boolean().optional(),
+  graphBoost: z.boolean().optional(),
+  explain: z.boolean().optional(),
 });
 
 const CreateRelationSchema = z.object({

@@ -279,6 +279,12 @@ export interface SearchOptions {
    * createdAfter/asOf options always win.
    */
   parseTemporal?: boolean;
+  /**
+   * Explainable recall: attach a human-readable `trace` to each result
+   * describing WHY it ranked where it did (retrieval mode, index score,
+   * graph boost, recency blend, rerank score, supersession state).
+   */
+  explain?: boolean;
 }
 
 export interface VectorSearchOptions extends SearchOptions {
@@ -289,6 +295,8 @@ export interface VectorSearchOptions extends SearchOptions {
 export interface SearchResult {
   memory: Memory;
   score?: number;
+  /** Present when the search ran with `explain: true` — why this result ranked here. */
+  trace?: string[];
 }
 
 // ---------------------------------------------------------------------------

@@ -92,9 +92,31 @@ degrade is visible. A mismatch between the embedding model's dimension and
 
 `.mcp.json` in this repo registers the MCP server for Claude Code / Cursor. Point its
 `SURREALDB_*` / `QDRANT_*` env at the same store your deployment uses so memory is shared
-across MCP, the REST API, and the Web UI. Tools: `memory_store`, `memory_search`,
-`memory_recall`, `memory_relate`, `memory_ingest`, `memory_status`, `memory_wakeup`,
-`session_*`.
+across MCP, the REST API, and the Web UI.
+
+```jsonc
+// Claude Desktop / Cursor / Claude Code (.mcp.json)
+{
+  "mcpServers": {
+    "novacortex": {
+      "command": "node",
+      "args": ["<repo>/packages/mcp-server/dist/index.js"], // npx @novacortex/mcp once published
+      "env": {
+        "SURREALDB_URL": "http://localhost:8000/rpc",
+        "SURREALDB_NAMESPACE": "novacortex", "SURREALDB_DATABASE": "production",
+        "SURREALDB_USER": "root", "SURREALDB_PASS": "<your pass>",
+        "QDRANT_URL": "http://localhost:6333",
+        "OPENAI_API_KEY": "…", "LLM_MODEL": "…" // optional: semantic search + intelligence
+      }
+    }
+  }
+}
+```
+
+Tools: `memory_store`, `memory_search` (hybrid + `explain` traces), `memory_recall`,
+`memory_relate`, `memory_update`, `memory_ingest` (LLM fact extraction), `memory_current`
+(supersedes-chain resolution), `memory_status`, `memory_wakeup` (progressive disclosure:
+`depth: "index"` = ~150-token index, drill down on demand), `session_*`.
 
 ## SDKs
 

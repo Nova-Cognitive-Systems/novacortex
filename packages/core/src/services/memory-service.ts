@@ -468,7 +468,11 @@ export class MemoryService {
         const { results: raw, hybrid } = await this.qdrant.hybridSearch(effQuery, window.qOptions);
         let results = await this.finalizeVectorResults(raw, searchOptions, window);
         if (wantRerank) {
-          results = await this.applyRerank(effQuery, results, baseLimit);
+          results = await this.applyRerank(effQuery, results, baseLimit, !!effOptions.explain);
+        }
+        if (effOptions.explain) {
+          const modeLabel = hybrid ? 'hybrid (dense + BM25, RRF fusion)' : 'semantic (dense vectors)';
+          for (const r of results) r.trace?.unshift(`retrieved via ${modeLabel}`);
         }
         return { results, mode: hybrid ? 'hybrid' : 'semantic' };
       }
@@ -538,7 +542,21 @@ export class MemoryService {
       const key = `${result.memory.id.namespace}:${result.memory.id.id}`;
       const full = memoryMap.get(key);
       if (!full) continue; // orphaned vector — skip
-      enrichedResults.push({ memory: full, score: result.score });
+      enrichedResults.push({
+        memory: full,
+        score: result.score,
+        ...(options.explain
+          ? {
+              trace: [
+                `index match ${(result.score ?? 0).toFixed(3)}`,
+                `salience ${full.metadata.effectiveSalience.toFixed(1)} (base ${full.metadata.salience})`,
+                ...(full.invalidatedAt
+                  ? [`superseded ${full.invalidatedAt.toISOString().slice(0, 10)} — history result`]
+                  : []),
+              ],
+            }
+          : {}),
+      });
     }
 
     // Temporal filtering on SurrealDB truth (the Qdrant payload flag may be
@@ -571,6 +589,9 @@ export class MemoryService {
       enrichedResults.forEach((r, i) => {
         const boost = 1 + 0.08 * Math.log2(1 + Math.min(degrees[i]!, 8));
         r.score = (r.score ?? 0) * boost;
+        if (options.explain && degrees[i]! > 0) {
+          r.trace?.push(`graph boost ×${boost.toFixed(2)} (${degrees[i]} typed edges)`);
+        }
       });
       enrichedResults.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
     }
@@ -587,6 +608,11 @@ export class MemoryService {
         const recency = Math.pow(0.5, ageMs / HALF_LIFE_MS);
         const relevance = Math.max(0, Math.min(1, r.score ?? 0));
         r.score = relevance * (1 - window.recencyWeight) + recency * window.recencyWeight;
+        if (options.explain) {
+          r.trace?.push(
+            `recency blend w=${window.recencyWeight}: relevance ${relevance.toFixed(3)} + recency ${recency.toFixed(3)} → ${r.score.toFixed(3)}`
+          );
+        }
       }
       enrichedResults.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
     }
@@ -611,7 +637,8 @@ export class MemoryService {
   private async applyRerank(
     query: string,
     results: SearchResult[],
-    limit: number
+    limit: number,
+    explain = false
   ): Promise<SearchResult[]> {
     if (results.length <= 1) return results.slice(0, limit);
     const scores = await this.rerankService.rerank(
@@ -620,7 +647,11 @@ export class MemoryService {
     );
     if (!scores) return results.slice(0, limit);
     return results
-      .map((r, i) => ({ ...r, score: scores[i] ?? 0 }))
+      .map((r, i) => ({
+        ...r,
+        score: scores[i] ?? 0,
+        ...(explain ? { trace: [...(r.trace ?? []), `cross-encoder rerank ${(scores[i] ?? 0).toFixed(3)}`] } : {}),
+      }))
       .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
       .slice(0, limit);
   }

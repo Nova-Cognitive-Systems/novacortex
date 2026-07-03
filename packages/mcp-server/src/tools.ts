@@ -32,6 +32,7 @@ import {
   MemoryWakeupSchema,
   MemoryIngestSchema,
   MemoryCurrentSchema,
+  MemoryUpdateSchema,
   type MemoryStoreInput,
   type MemorySearchInput,
   type MemoryRecallInput,
@@ -46,6 +47,7 @@ import {
   type MemoryWakeupInput,
   type MemoryIngestInput,
   type MemoryCurrentInput,
+  type MemoryUpdateInput,
 } from './schemas.js';
 
 // Convert Zod schema to JSON Schema for MCP
@@ -258,6 +260,12 @@ export class ToolHandler {
           'Resolve a memory to its CURRENT version by walking the supersedes chain. Use when a recalled fact might be outdated (e.g. it carries an invalidatedAt or a supersedes edge).',
         inputSchema: zodToJsonSchema(MemoryCurrentSchema),
       },
+      {
+        name: 'memory_update',
+        description:
+          'Update an existing memory (content, tags, entities, salience). Content changes are re-embedded automatically. Prefer storing a NEW memory + memory_relate(supersedes) when a fact CHANGED — update is for corrections/enrichment of the same fact.',
+        inputSchema: zodToJsonSchema(MemoryUpdateSchema),
+      },
     ];
   }
 
@@ -292,6 +300,8 @@ export class ToolHandler {
           return await this.handleMemoryIngest(args);
         case 'memory_current':
           return await this.handleMemoryCurrent(args);
+        case 'memory_update':
+          return await this.handleMemoryUpdate(args);
         default:
           return this.error(`Unknown tool: ${name}`);
       }
@@ -349,6 +359,7 @@ export class ToolHandler {
         minSalience: input.minSalience,
         scoreThreshold: input.scoreThreshold,
         includeInvalidated: input.includeInvalidated,
+        explain: input.explain,
       });
     } else {
       // Plain text query → embed it server-side and run a semantic vector search,
@@ -361,6 +372,7 @@ export class ToolHandler {
         minSalience: input.minSalience,
         scoreThreshold: input.scoreThreshold,
         includeInvalidated: input.includeInvalidated,
+        explain: input.explain,
       });
       results = search.results;
     }
@@ -379,6 +391,7 @@ export class ToolHandler {
         ...(r.memory.invalidatedAt
           ? { invalidatedAt: r.memory.invalidatedAt, hint: 'superseded — resolve via memory_current' }
           : {}),
+        ...(r.trace ? { trace: r.trace } : {}),
       })),
     });
   }
@@ -613,21 +626,16 @@ export class ToolHandler {
       minSalience: 3,
     });
 
-    // L2: Topic-filtered memories if query provided
+    // L2: Topic-relevant memories via real retrieval (hybrid/semantic when
+    // embeddings are configured, substring otherwise).
     let l2: Memory[] = [];
     if (input.query) {
       const sanitized = sanitizeSearchQuery(input.query);
-      const l2Candidates = await this.memoryService.searchMemories({
+      const search = await this.memoryService.searchByText(sanitized, {
         namespace: input.namespace,
         limit: 10,
       });
-      // Simple keyword filter for L2 since we don't have full-text search yet
-      const queryLower = sanitized.toLowerCase();
-      l2 = l2Candidates.filter(
-        (m) =>
-          m.content.toLowerCase().includes(queryLower) ||
-          m.metadata.tags.some((t) => t.toLowerCase().includes(queryLower))
-      );
+      l2 = search.results.map((r) => r.memory);
     }
 
     // Combine and deduplicate
@@ -639,6 +647,31 @@ export class ToolHandler {
       return true;
     });
 
+    // Progressive disclosure: 'index' packs one line per memory into a tiny
+    // budget (~150 tokens) — the agent drills into anything interesting with
+    // memory_recall/memory_search instead of paying for full contents upfront.
+    if (input.depth === 'index') {
+      const INDEX_BUDGET_CHARS = 640;
+      let indexChars = 0;
+      const lines: string[] = [];
+      for (const m of combined) {
+        const gist = m.content.length > 80 ? `${m.content.slice(0, 77)}...` : m.content;
+        const line = `${m.id.id.slice(-8)} [${m.memoryType[0]}${Math.round(m.metadata.effectiveSalience)}] ${gist}`;
+        if (indexChars + line.length > INDEX_BUDGET_CHARS) break;
+        indexChars += line.length;
+        lines.push(line);
+      }
+      return this.success({
+        namespace: input.namespace,
+        query: input.query,
+        depth: 'index',
+        totalAvailable: combined.length,
+        indexed: lines.length,
+        index: lines,
+        hint: 'One line per memory: <id-suffix> [<type><salience>] <gist>. Drill down with memory_search (topic) or memory_recall (full id via memory_search).',
+      });
+    }
+
     // Enforce ~900 token budget (approx 4 chars/token, ~3600 chars total)
     let totalChars = 0;
     const budgeted = combined.filter((m) => {
@@ -649,6 +682,7 @@ export class ToolHandler {
     return this.success({
       namespace: input.namespace,
       query: input.query,
+      depth: 'full',
       totalLoaded: budgeted.length,
       l1Count: l1.length,
       l2Count: l2.length,
@@ -701,6 +735,44 @@ export class ToolHandler {
         content: m.content,
       })),
       resolutions: result.resolutions,
+    });
+  }
+
+  private async handleMemoryUpdate(args: unknown): Promise<ToolResult> {
+    const input = MemoryUpdateSchema.parse(args) as MemoryUpdateInput;
+    walLog('memory_update', args);
+
+    const id = { id: input.id, namespace: input.namespace };
+    const updated = await this.memoryService.updateMemory(id, {
+      ...(input.content !== undefined ? { content: input.content } : {}),
+      ...(input.tags !== undefined ? { tags: input.tags } : {}),
+      ...(input.entities !== undefined ? { entities: input.entities } : {}),
+      ...(input.salience !== undefined ? { salience: input.salience } : {}),
+    });
+    if (!updated) {
+      return this.error(`Memory not found: ${input.namespace}:${input.id}`);
+    }
+
+    // A content change invalidates the stored vector — re-embed so semantic
+    // search keeps matching the NEW text (previously a silent stale-vector gap).
+    let reEmbedded = false;
+    if (input.content !== undefined) {
+      const embedder = this.memoryService.getEmbeddingService();
+      if (embedder.isEnabled()) {
+        const vector = await embedder.embed(updated.content);
+        if (vector) {
+          await this.memoryService.storeEmbedding(id, vector);
+          reEmbedded = true;
+        }
+      }
+    }
+
+    return this.success({
+      updated: true,
+      id: updated.id.id,
+      namespace: updated.id.namespace,
+      version: updated.version,
+      reEmbedded,
     });
   }
 

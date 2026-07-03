@@ -12,6 +12,10 @@ import type {
   ClientOptions,
   CreateMemoryInput,
   CreateRelationInput,
+  CurrentFactResponse,
+  IngestInput,
+  IngestJobStatus,
+  IngestResponse,
   ListMemoriesOptions,
   ListResponse,
   Memory,
@@ -214,6 +218,26 @@ class MemoriesResource {
 
   relations(namespace: string, id: string): Promise<unknown> {
     return this.client.request('GET', `/memories/${encodeURIComponent(namespace)}/${encodeURIComponent(id)}/relations`);
+  }
+
+  /** Resolve a (possibly superseded) memory to its CURRENT version via the supersedes chain. */
+  current(namespace: string, id: string): Promise<CurrentFactResponse> {
+    return this.client.request<CurrentFactResponse>('GET', `/memories/${encodeURIComponent(namespace)}/${encodeURIComponent(id)}/current`);
+  }
+
+  /**
+   * Distill conversation messages into memories (LLM fact extraction +
+   * append-only conflict resolution). Async by default — returns a job; pass
+   * `wait: true` for a synchronous result or `dryRun: true` to preview facts.
+   * Requires the server's intelligence layer (LLM_MODEL) to be configured.
+   */
+  ingest(input: IngestInput): Promise<IngestResponse> {
+    return this.client.request<IngestResponse>('POST', '/memories/ingest', input);
+  }
+
+  /** Status/result of an async ingest job. */
+  ingestStatus(jobId: string): Promise<IngestJobStatus> {
+    return this.client.request<IngestJobStatus>('GET', `/memories/ingest/${encodeURIComponent(jobId)}`);
   }
 }
 

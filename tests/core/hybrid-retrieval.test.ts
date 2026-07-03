@@ -89,11 +89,15 @@ describe.skipIf(SKIP)('hybrid retrieval (integration)', () => {
     created.push(a, b);
 
     mockEmbeddings(() => axis(3)); // query dense vector: orthogonal to both
-    const { results, mode } = await svc.searchByText('zebrafish', { namespace: ns });
+    const { results, mode } = await svc.searchByText('zebrafish', { namespace: ns, explain: true });
 
     expect(mode).toBe('hybrid');
     expect(results.length).toBeGreaterThan(0);
     expect(results[0]!.memory.id.id).toBe(b.id.id);
+
+    // Explainable recall: every result carries a human-readable trace.
+    expect(results[0]!.trace?.[0]).toContain('retrieved via hybrid');
+    expect(results[0]!.trace?.some((t) => t.startsWith('index match'))).toBe(true);
   });
 
   it('falls back to plain semantic search when the query has no indexable tokens', async () => {
