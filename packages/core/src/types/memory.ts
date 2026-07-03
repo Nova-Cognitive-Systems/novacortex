@@ -122,7 +122,8 @@ export interface PortableMemory {
  */
 export interface PMFHeader {
   readonly magic: 'NCPMF';           // Magic bytes for format detection
-  readonly version: '1.0';
+  /** 1.1 adds the optional per-memory `invalidated` timestamp (append-only supersession). */
+  readonly version: '1.0' | '1.1';
   readonly created: Date;
   readonly source: PMFSourceInfo;
   readonly integrity: PMFIntegrity;
@@ -161,6 +162,8 @@ export interface PMFMemoryEntry {
   readonly created: string;          // ISO 8601
   readonly accessed: string;         // ISO 8601
   readonly version: number;
+  /** ISO 8601 — set when this fact was superseded (PMF v1.1, append-only history). */
+  readonly invalidated?: string;
   readonly metadata: {
     readonly confidence: number;
     readonly salience: number;
@@ -248,6 +251,17 @@ export interface SearchOptions {
    * relevant (e.g. a value that changed over time).
    */
   recencyWeight?: number;
+  /**
+   * Include memories that were superseded/invalidated (default false: search
+   * returns only CURRENT facts — the payoff of append-only resolution).
+   */
+  includeInvalidated?: boolean;
+  /**
+   * Point-in-time query: return the store as it was believed at this instant —
+   * memories created at/before `asOf` and not yet invalidated at `asOf`.
+   * Implies looking past later invalidations (independent of includeInvalidated).
+   */
+  asOf?: Date;
 }
 
 export interface VectorSearchOptions extends SearchOptions {

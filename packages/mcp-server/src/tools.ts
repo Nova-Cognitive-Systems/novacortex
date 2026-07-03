@@ -31,6 +31,7 @@ import {
   MemoryStatusSchema,
   MemoryWakeupSchema,
   MemoryIngestSchema,
+  MemoryCurrentSchema,
   type MemoryStoreInput,
   type MemorySearchInput,
   type MemoryRecallInput,
@@ -44,6 +45,7 @@ import {
   type MemoryStatusInput,
   type MemoryWakeupInput,
   type MemoryIngestInput,
+  type MemoryCurrentInput,
 } from './schemas.js';
 
 // Convert Zod schema to JSON Schema for MCP
@@ -250,6 +252,12 @@ export class ToolHandler {
           'Distill conversation messages into discrete memories automatically (LLM fact extraction + conflict resolution with typed edges). Use instead of memory_store when you have raw conversation turns rather than a curated fact. Requires a configured LLM (LLM_MODEL).',
         inputSchema: zodToJsonSchema(MemoryIngestSchema),
       },
+      {
+        name: 'memory_current',
+        description:
+          'Resolve a memory to its CURRENT version by walking the supersedes chain. Use when a recalled fact might be outdated (e.g. it carries an invalidatedAt or a supersedes edge).',
+        inputSchema: zodToJsonSchema(MemoryCurrentSchema),
+      },
     ];
   }
 
@@ -282,6 +290,8 @@ export class ToolHandler {
           return await this.handleMemoryWakeup(args);
         case 'memory_ingest':
           return await this.handleMemoryIngest(args);
+        case 'memory_current':
+          return await this.handleMemoryCurrent(args);
         default:
           return this.error(`Unknown tool: ${name}`);
       }
@@ -338,6 +348,7 @@ export class ToolHandler {
         limit: input.limit,
         minSalience: input.minSalience,
         scoreThreshold: input.scoreThreshold,
+        includeInvalidated: input.includeInvalidated,
       });
     } else {
       // Plain text query → embed it server-side and run a semantic vector search,
@@ -349,6 +360,7 @@ export class ToolHandler {
         limit: input.limit,
         minSalience: input.minSalience,
         scoreThreshold: input.scoreThreshold,
+        includeInvalidated: input.includeInvalidated,
       });
       results = search.results;
     }
@@ -364,6 +376,9 @@ export class ToolHandler {
         score: r.score,
         tags: r.memory.metadata.tags,
         createdAt: r.memory.createdAt,
+        ...(r.memory.invalidatedAt
+          ? { invalidatedAt: r.memory.invalidatedAt, hint: 'superseded — resolve via memory_current' }
+          : {}),
       })),
     });
   }
@@ -686,6 +701,34 @@ export class ToolHandler {
         content: m.content,
       })),
       resolutions: result.resolutions,
+    });
+  }
+
+  private async handleMemoryCurrent(args: unknown): Promise<ToolResult> {
+    const input = MemoryCurrentSchema.parse(args) as MemoryCurrentInput;
+
+    const result = await this.memoryService.getCurrentFact({
+      id: input.id,
+      namespace: input.namespace,
+    });
+    if (!result) {
+      return this.error(`Memory not found: ${input.namespace}:${input.id}`);
+    }
+
+    return this.success({
+      superseded: result.superseded,
+      hops: result.chain.length - 1,
+      current: {
+        id: result.current.id.id,
+        namespace: result.current.id.namespace,
+        content: result.current.content,
+        createdAt: result.current.createdAt,
+      },
+      chain: result.chain.map((m) => ({
+        id: m.id.id,
+        content: m.content,
+        invalidatedAt: m.invalidatedAt ?? null,
+      })),
     });
   }
 

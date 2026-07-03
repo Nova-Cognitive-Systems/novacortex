@@ -28,6 +28,22 @@ plus its foundation.
   - `/health` reports the intelligence status (`enabled`, `model`).
 - **`invalidatedAt`** on memories: append-only supersession marker, settable via the
   update API; groundwork for point-in-time queries and read-path suppression.
+- **Temporal read path** — the payoff of append-only resolution:
+  - Default search (text and vector) now returns only **current** facts; superseded
+    memories are filtered at the index level (Qdrant payload flag + SurrealDB truth).
+    Opt out with `includeInvalidated: true`.
+  - **Point-in-time queries**: `asOf` (ISO 8601) reconstructs what the store believed
+    at that instant — created before `asOf` and not yet invalidated then.
+  - **`GET /memories/:ns/:id/current`** + MCP tool **`memory_current`**: walk the
+    supersedes chain from any (possibly outdated) memory to its newest version,
+    returning the full chain. Deterministic, zero LLM at read time.
+  - MCP `memory_search` marks superseded results with a `resolve via memory_current`
+    hint when `includeInvalidated` is used.
+  - Exports, `/stats`, and namespace deletion always see the full history (invalidated
+    rows are never silently dropped).
+- **PMF v1.1** (RFC PMF-001 updated): memory entries carry the optional `invalidated`
+  timestamp; the canonical checksum now covers it; import restores the marker. Old
+  v1.0 files remain importable (all historical checksum formulas accepted).
 - **Local-AI compose profile**: `docker compose --profile local-ai up -d`
   starts an Ollama sidecar (default `nomic-embed-text`; add `qwen3:8b` for the
   intelligence layer via `OLLAMA_PULL`) so semantic search AND memory intelligence run

@@ -74,6 +74,9 @@ const SearchQuerySchema = z.object({
   // Explicit string check: z.coerce.boolean() treats ANY non-empty string
   // (incl. "false"/"0") as true, so ?includeRelations=false would force it on.
   includeRelations: z.string().optional().transform((v) => v === 'true'),
+  // Temporal read-path controls: surface superseded facts / point-in-time view.
+  includeInvalidated: z.string().optional().transform((v) => v === 'true'),
+  asOf: z.coerce.date().optional(),
 });
 
 const VectorSearchSchema = z.object({
@@ -85,6 +88,8 @@ const VectorSearchSchema = z.object({
   offset: z.number().int().min(0).optional(),
   minSalience: z.number().min(0).max(10).optional(),
   scoreThreshold: z.number().min(0).max(1).optional(),
+  includeInvalidated: z.boolean().optional(),
+  asOf: z.coerce.date().optional(),
 });
 
 const CreateRelationSchema = z.object({
@@ -736,6 +741,33 @@ export function createMemoriesRouter(memoryService: MemoryService): Router {
       res.json({
         data: results,
         count: results.length,
+      });
+    })
+  );
+
+  // GET /memories/:namespace/:id/current - Walk the supersedes chain to the
+  // CURRENT version of this fact (deterministic, zero LLM at read time).
+  router.get(
+    '/:namespace/:id/current',
+    asyncHandler(async (req: Request, res: Response) => {
+      const { namespace, id } = req.params;
+
+      const result = await memoryService.getCurrentFact({ id: id!, namespace: namespace! });
+      if (!result) {
+        res.status(404).json({ error: 'Memory not found' });
+        return;
+      }
+
+      res.json({
+        current: result.current,
+        superseded: result.superseded,
+        hops: result.chain.length - 1,
+        chain: result.chain.map((m) => ({
+          id: m.id,
+          content: m.content,
+          createdAt: m.createdAt,
+          invalidatedAt: m.invalidatedAt ?? null,
+        })),
       });
     })
   );

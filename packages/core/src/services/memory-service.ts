@@ -253,9 +253,59 @@ export class MemoryService {
     // If memory has embedding, update in Qdrant
     if (updated.embedding && updated.embedding.length > 0) {
       await this.qdrant.upsert(updated);
+    } else if (input.invalidatedAt !== undefined) {
+      // Mirror the invalidation marker into the vector payload so the default
+      // search filter applies at the index level (best-effort; SurrealDB stays
+      // the source of truth and reads re-filter after enrichment).
+      await this.qdrant.setInvalidated(id, input.invalidatedAt ?? null).catch(() => {});
     }
 
     return updated;
+  }
+
+  /**
+   * Walk the supersedes chain from a memory to its CURRENT tip: if this fact
+   * was superseded (possibly repeatedly), return the newest version, plus the
+   * chain walked. Deterministic, zero LLM. Cycle-safe.
+   */
+  async getCurrentFact(id: MemoryId): Promise<{
+    current: Memory;
+    superseded: boolean;
+    chain: Memory[];
+  } | null> {
+    await this.ensureConnected();
+
+    const start = await this.surrealdb.findById(id);
+    if (!start) return null;
+
+    const chain: Memory[] = [start];
+    const visited = new Set<string>([`${id.namespace}:${id.id}`]);
+    let current = start;
+
+    for (let hops = 0; hops < 50; hops++) {
+      const relations = await this.surrealdb.findRelations(current.id);
+      // Incoming supersedes edge: fromMemory is the successor of current.
+      const successors = relations.filter(
+        (r) =>
+          r.relationType === ('supersedes' as RelationType) &&
+          r.toMemory.id === current.id.id &&
+          r.toMemory.namespace === current.id.namespace
+      );
+      if (successors.length === 0) break;
+
+      // Multiple successors (rare): follow the newest edge.
+      const next = successors.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0]!;
+      const key = `${next.fromMemory.namespace}:${next.fromMemory.id}`;
+      if (visited.has(key)) break; // cycle guard
+      visited.add(key);
+
+      const nextMemory = await this.surrealdb.findById(next.fromMemory);
+      if (!nextMemory) break;
+      chain.push(nextMemory);
+      current = nextMemory;
+    }
+
+    return { current, superseded: chain.length > 1, chain };
   }
 
   async deleteMemory(id: MemoryId): Promise<boolean> {
@@ -297,7 +347,14 @@ export class MemoryService {
     const PAGE = 1000;
     const out: Memory[] = [];
     for (let offset = 0; ; offset += PAGE) {
-      const batch = await this.surrealdb.search({ ...options, limit: PAGE, offset });
+      // Exports must NEVER drop history: include invalidated (superseded)
+      // memories regardless of the read-path default.
+      const batch = await this.surrealdb.search({
+        ...options,
+        includeInvalidated: true,
+        limit: PAGE,
+        offset,
+      });
       out.push(...batch);
       if (batch.length < PAGE) break;
     }
@@ -389,10 +446,12 @@ export class MemoryService {
     const limit = options.limit ?? 10;
     const offset = options.offset ?? 0;
 
-    // With recency weighting, over-fetch a candidate pool from offset 0 so recency
-    // can pull in items that pure relevance ranked just outside the page, then
-    // re-rank and page in JS. Otherwise let Qdrant apply limit/offset directly.
-    const qOptions: VectorSearchOptions = recencyWeight > 0
+    // Over-fetch a candidate pool from offset 0 whenever ranking/filtering
+    // happens after enrichment: recency re-ranking, and asOf time-window
+    // filtering (which can only see invalidatedAt on the enriched rows).
+    // Otherwise let Qdrant apply limit/offset directly.
+    const postProcess = recencyWeight > 0 || !!options.asOf;
+    const qOptions: VectorSearchOptions = postProcess
       ? { ...options, offset: 0, limit: Math.max((offset + limit) * 4, 20) }
       : options;
     const vectorResults = await this.qdrant.search(qOptions);
@@ -421,6 +480,20 @@ export class MemoryService {
       enrichedResults.push({ memory: full, score: result.score });
     }
 
+    // Temporal filtering on SurrealDB truth (the Qdrant payload flag may be
+    // stale for points written before the mirror existed): default excludes
+    // invalidated facts; asOf reconstructs what was believed at that instant.
+    if (options.asOf) {
+      const asOfMs = options.asOf.getTime();
+      enrichedResults = enrichedResults.filter(
+        (r) =>
+          r.memory.createdAt.getTime() <= asOfMs &&
+          (!r.memory.invalidatedAt || r.memory.invalidatedAt.getTime() > asOfMs)
+      );
+    } else if (!options.includeInvalidated) {
+      enrichedResults = enrichedResults.filter((r) => !r.memory.invalidatedAt);
+    }
+
     // Optional recency weighting: blend an ABSOLUTE recency score (exponential
     // decay, 30-day half-life — stable across requests/pages) with the relevance
     // score (clamped to 0..1) and re-rank, then page in JS. This lets the current
@@ -435,6 +508,8 @@ export class MemoryService {
         r.score = relevance * (1 - recencyWeight) + recency * recencyWeight;
       }
       enrichedResults.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    }
+    if (postProcess) {
       enrichedResults = enrichedResults.slice(offset, offset + limit);
     }
 
@@ -739,6 +814,34 @@ export class MemoryService {
     });
   }
 
+  /**
+   * PMF v1.1 checksum payload — extends the v1.1.x formula with the per-memory
+   * `invalidated` timestamp so append-only supersession history is integrity-
+   * covered ("provable memory"). The older formulas stay accepted on import.
+   */
+  private pmfChecksumPayloadV13(
+    memories: ReadonlyArray<PMFMemoryEntry>,
+    relations: ReadonlyArray<PMFRelationEntry>
+  ): string {
+    return JSON.stringify({
+      memories: memories
+        .map((m) => {
+          const md = m.metadata;
+          const meta = md
+            ? `${md.confidence},${md.salience},${md.decayRate},${[...md.tags].sort().join(',')}`
+            : '';
+          const emb = m.embedding && m.embedding.length > 0
+            ? createHash('sha256').update(JSON.stringify(m.embedding)).digest('hex')
+            : '';
+          return `${m.contentHash}|${m.memoryType}|${meta}|${emb}|${m.invalidated ?? ''}`;
+        })
+        .sort(),
+      relations: relations
+        .map((r) => `${r.fromNs}:${r.from}->${r.toNs}:${r.to}:${r.type}:${r.strength}:${r.bidirectional}`)
+        .sort(),
+    });
+  }
+
   /** The v1.1.0 (narrow, identity-only) checksum payload — kept for import compat. */
   private pmfChecksumPayloadV110(
     memories: ReadonlyArray<{ contentHash: string }>,
@@ -781,6 +884,7 @@ export class MemoryService {
       created: m.createdAt.toISOString(),
       accessed: m.accessedAt.toISOString(),
       version: m.version,
+      ...(m.invalidatedAt ? { invalidated: m.invalidatedAt.toISOString() } : {}),
       metadata: {
         confidence: m.metadata.confidence,
         salience: m.metadata.salience,
@@ -816,8 +920,9 @@ export class MemoryService {
       .update(sortedHashes.join(''))
       .digest('hex');
 
-    // Create full payload checksum (canonical, binary-round-trip-safe)
-    const payload = this.pmfChecksumPayload(pmfMemories, pmfRelations);
+    // Create full payload checksum (canonical, binary-round-trip-safe,
+    // v1.1: covers the invalidation history)
+    const payload = this.pmfChecksumPayloadV13(pmfMemories, pmfRelations);
     const checksum = this.crc32(payload).toString(16).padStart(8, '0');
 
     // Detect embedding dimension
@@ -826,7 +931,7 @@ export class MemoryService {
     return {
       header: {
         magic: 'NCPMF',
-        version: '1.0',
+        version: '1.1',
         created: new Date(),
         source: {
           namespace,
@@ -877,10 +982,12 @@ export class MemoryService {
       return { imported: 0, skipped: 0, relationsImported: 0, importedIds: [], errors: ['Integrity check failed: Merkle root mismatch'] };
     }
 
-    // Verify checksum. Accept the current canonical checksum, the v1.1.0 narrow
-    // canonical one, or the v1.0.x JSON.stringify one — all for backward compat.
+    // Verify checksum. Accept the current v1.1 canonical checksum plus all
+    // historical formulas (v1.1.x broad, v1.1.0 narrow, v1.0.x JSON.stringify)
+    // for backward compat.
     const crc = (s: string) => this.crc32(s).toString(16).padStart(8, '0');
     const candidates = [
+      crc(this.pmfChecksumPayloadV13(pmf.memories, pmf.relations)),
       crc(this.pmfChecksumPayload(pmf.memories, pmf.relations)),
       crc(this.pmfChecksumPayloadV110(pmf.memories, pmf.relations)),
       crc(JSON.stringify({ memories: pmf.memories, relations: pmf.relations })),
@@ -947,6 +1054,11 @@ export class MemoryService {
           decayRate: entry.metadata.decayRate,
           embedding: entry.embedding ? [...entry.embedding] : undefined,
         });
+
+        // PMF v1.1: restore the append-only supersession marker.
+        if (entry.invalidated) {
+          await this.updateMemory(created.id, { invalidatedAt: new Date(entry.invalidated) });
+        }
 
         idMap.set(key(entry.namespace, entry.id), created.id);
         importedIds.push(created.id);

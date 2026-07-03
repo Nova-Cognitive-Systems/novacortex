@@ -405,8 +405,9 @@ app.get('/stats', requireScopes('memories:read'), async (_req: Request, res: Res
     await memoryService.connect();
 
     // OPTIMIZATION: Fetch only necessary fields with a reasonable limit
-    // For large datasets, consider adding aggregate queries to the adapter
-    const memories = await memoryService.searchMemories({ limit: 10000 });
+    // For large datasets, consider adding aggregate queries to the adapter.
+    // Stats count STORED rows, so include invalidated (superseded) history.
+    const memories = await memoryService.searchMemories({ limit: 10000, includeInvalidated: true });
 
     // Build stats manually since core service doesn't return proper breakdown
     const byNamespace: Record<string, number> = {};
@@ -600,8 +601,13 @@ app.delete('/namespaces/:name', requireScopes('namespaces:write'), async (req: R
 
     await memoryService.connect();
 
-    // Get all memories in this namespace
-    const memories = await memoryService.searchMemories({ namespace: name, limit: 1000 });
+    // Get all memories in this namespace — INCLUDING invalidated history, or a
+    // namespace delete would silently leave superseded rows behind as orphans.
+    const memories = await memoryService.searchMemories({
+      namespace: name,
+      limit: 1000,
+      includeInvalidated: true,
+    });
 
     // Delete each memory
     let deleted = 0;
@@ -632,6 +638,16 @@ app.post('/search', requireScopes('memories:read'), async (req: Request, res: Re
     // (falling back to substring search if embeddings are disabled) — so callers
     // no longer need to compute embeddings client-side.
     const { vector, query, ...options } = req.body ?? {};
+
+    // Temporal params arrive as JSON strings — coerce for the service layer.
+    if (typeof options.asOf === 'string' && options.asOf.length > 0) {
+      const asOf = new Date(options.asOf);
+      if (isNaN(asOf.getTime())) {
+        res.status(400).json({ error: 'bad_request', message: '`asOf` must be an ISO 8601 datetime.' });
+        return;
+      }
+      options.asOf = asOf;
+    }
 
     if (Array.isArray(vector) && vector.length > 0) {
       const results = await memoryService.vectorSearch({ ...options, vector });

@@ -51,6 +51,7 @@ export const MemorySearchSchema = z.object({
   minSalience: z.number().min(0).max(10).optional().describe('Minimum salience score'),
   embedding: z.array(z.number()).optional().describe('Query embedding for semantic search'),
   scoreThreshold: z.number().min(0).max(1).optional().describe('Minimum similarity score'),
+  includeInvalidated: z.boolean().default(false).describe('Also return superseded/invalidated facts (default: current facts only)'),
 });
 
 export const MemoryRecallSchema = z.object({
@@ -127,6 +128,11 @@ export const IngestMessageSchema = z.object({
   timestamp: z.string().optional().describe('Optional ISO timestamp of the turn'),
 });
 
+export const MemoryCurrentSchema = z.object({
+  id: z.string().describe('Memory ID to resolve to its current version'),
+  namespace: z.string().default('default').describe('Namespace of the memory'),
+});
+
 export const MemoryIngestSchema = z.object({
   messages: z.array(IngestMessageSchema).describe('Conversation turns to distill into memories'),
   namespace: z.string().default('default').describe('Namespace to store extracted memories in'),
@@ -150,3 +156,4 @@ export type SessionEndInput = z.infer<typeof SessionEndSchema>;
 export type MemoryStatusInput = z.infer<typeof MemoryStatusSchema>;
 export type MemoryWakeupInput = z.infer<typeof MemoryWakeupSchema>;
 export type MemoryIngestInput = z.infer<typeof MemoryIngestSchema>;
+export type MemoryCurrentInput = z.infer<typeof MemoryCurrentSchema>;

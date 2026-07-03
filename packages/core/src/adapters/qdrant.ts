@@ -23,6 +23,9 @@ interface PointPayload {
   tags: string[];
   salience: number;
   createdAt: string;
+  /** Mirror of the append-only supersession marker (filtered out by default). */
+  invalidated?: boolean;
+  invalidatedAt?: string | null;
   [key: string]: unknown;
 }
 
@@ -88,6 +91,15 @@ export class QdrantAdapter {
         });
       }
 
+      // Idempotent, runs for PRE-EXISTING collections too (the field was added
+      // after v1.2): index the invalidation flag used by the default filter.
+      await this.client
+        .createPayloadIndex(this.collectionName, {
+          field_name: 'invalidated',
+          field_schema: 'bool',
+        })
+        .catch(() => {}); // already exists — fine
+
       this.initialized = true;
     } catch (error) {
       throw new Error(`Failed to initialize Qdrant: ${error}`);
@@ -110,6 +122,8 @@ export class QdrantAdapter {
       tags: [...memory.metadata.tags],
       salience: memory.metadata.effectiveSalience,
       createdAt: memory.createdAt.toISOString(),
+      invalidated: !!memory.invalidatedAt,
+      invalidatedAt: memory.invalidatedAt ? memory.invalidatedAt.toISOString() : null,
     };
 
     await this.client.upsert(this.collectionName, {
@@ -144,6 +158,8 @@ export class QdrantAdapter {
         tags: [...memory.metadata.tags],
         salience: memory.metadata.effectiveSalience,
         createdAt: memory.createdAt.toISOString(),
+        invalidated: !!memory.invalidatedAt,
+        invalidatedAt: memory.invalidatedAt ? memory.invalidatedAt.toISOString() : null,
       };
       return {
         id: this.memoryIdToPointId(memory.id),
@@ -216,11 +232,21 @@ export class QdrantAdapter {
       });
     }
 
+    // Default: exclude invalidated (superseded) facts at the index level. Points
+    // written before this flag existed simply lack the field and pass must_not;
+    // MemoryService applies a second, SurrealDB-truth filter after enrichment.
+    // asOf queries need past facts, so they skip the index filter entirely and
+    // rely on the post-enrichment time-window filter.
+    if (!options.includeInvalidated && !options.asOf) {
+      filter['must_not'] = [{ key: 'invalidated', match: { value: true } }];
+    }
+
+    const hasFilter = mustConditions.length > 0 || !!filter['must_not'];
     const searchResult = await this.client.search(this.collectionName, {
       vector: options.vector,
       limit: options.limit ?? 10,
       offset: options.offset ?? 0,
-      filter: mustConditions.length > 0 ? filter : undefined,
+      filter: hasFilter ? filter : undefined,
       score_threshold: options.scoreThreshold,
       with_payload: true,
     });
@@ -268,6 +294,30 @@ export class QdrantAdapter {
         score: result.score,
       };
     });
+  }
+
+  /**
+   * Mirror the append-only invalidation marker into the point payload without
+   * touching the vector (setPayload). Best-effort: memories without a stored
+   * embedding have no point; SurrealDB remains the source of truth and the
+   * read path re-filters after enrichment.
+   */
+  async setInvalidated(memoryId: MemoryId, invalidatedAt: Date | null): Promise<boolean> {
+    await this.initialize();
+    const pointId = this.memoryIdToPointId(memoryId);
+    try {
+      await this.client.setPayload(this.collectionName, {
+        wait: true,
+        payload: {
+          invalidated: !!invalidatedAt,
+          invalidatedAt: invalidatedAt ? invalidatedAt.toISOString() : null,
+        },
+        points: [pointId],
+      });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async pointExists(memoryId: MemoryId): Promise<boolean> {

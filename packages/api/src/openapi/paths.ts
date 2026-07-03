@@ -268,6 +268,33 @@ registry.registerPath({
 
 registry.registerPath({
   method: 'get',
+  path: '/memories/{namespace}/{id}/current',
+  tags: ['Memories'],
+  summary: 'Resolve a memory to its current version (walk the supersedes chain)',
+  description:
+    'Append-only resolution never deletes: superseded facts stay stored with invalidatedAt. ' +
+    'This endpoint follows incoming supersedes edges to the newest version of the fact and returns the chain walked. Deterministic, no LLM.',
+  security: bearer,
+  request: { params: z.object({ namespace: z.string(), id: z.string() }) },
+  responses: {
+    200: {
+      description: 'Current version + chain',
+      content: json(
+        z.object({
+          current: z.unknown(),
+          superseded: z.boolean(),
+          hops: z.number(),
+          chain: z.array(z.unknown()),
+        }),
+      ),
+    },
+    401: err401,
+    404: err404,
+  },
+});
+
+registry.registerPath({
+  method: 'get',
   path: '/memories/{namespace}/{id}/similar',
   tags: ['Memories'],
   summary: 'Find similar memories',
@@ -521,8 +548,12 @@ registry.registerPath({
   method: 'post',
   path: '/search',
   tags: ['Search'],
-  summary: 'Vector search (root shortcut)',
-  description: 'Convenience alias for POST /memories/search',
+  summary: 'Search memories (text query or pre-computed vector)',
+  description:
+    'Provide `query` (text — embedded server-side, semantic when embeddings are configured) or `vector` (number[]). ' +
+    'Temporal controls: by default only CURRENT facts are returned (superseded/invalidated memories are filtered); ' +
+    'set `includeInvalidated: true` to include them, or `asOf` (ISO 8601) for a point-in-time view of what was believed at that instant. ' +
+    '`recencyWeight` (0..1) blends recency into ranking; `includeRelations` hydrates typed edges (conflict signals).',
   security: bearer,
   request: { body: { content: json(VectorSearchRequest) } },
   responses: {

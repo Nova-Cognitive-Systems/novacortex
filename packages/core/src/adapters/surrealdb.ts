@@ -550,6 +550,16 @@ export class SurrealDBAdapter {
       conditions.push('createdAt >= $createdAfter');
       params['createdAfter'] = new DateTime(options.createdAfter);
     }
+    if (options.asOf) {
+      // Point-in-time: rows that existed AND were still current at `asOf`.
+      conditions.push('createdAt <= $asOf');
+      conditions.push('(invalidatedAt = NONE OR invalidatedAt = NULL OR invalidatedAt > $asOf)');
+      params['asOf'] = new DateTime(options.asOf);
+    } else if (!options.includeInvalidated) {
+      // Default: only CURRENT facts — superseded memories stay stored (append-
+      // only) but no longer surface in search.
+      conditions.push('(invalidatedAt = NONE OR invalidatedAt = NULL)');
+    }
 
     return { whereClause: conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '', params };
   }
