@@ -1,0 +1,30 @@
+{
+  "name": "@novacortex/vercel-ai",
+  "version": "1.2.1",
+  "description": "Vercel AI SDK middleware that gives any language model long-term memory backed by your self-hosted NovaCortex deployment",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Nova-Cognitive-Systems/novacortex.git",
+    "directory": "packages/vercel-ai"
+  },
+  "keywords": ["vercel-ai", "ai-sdk", "middleware", "memory", "ai-agents", "self-hosted"],
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@novacortex/sdk": "^0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

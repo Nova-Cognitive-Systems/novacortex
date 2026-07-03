@@ -12,6 +12,7 @@ import { registerProfileRenameCommand } from './commands/profile/rename.js';
 import { registerTokensListCommand } from './commands/admin/tokens/list.js';
 import { registerTokensCreateCommand } from './commands/admin/tokens/create.js';
 import { registerTokensRevokeCommand } from './commands/admin/tokens/revoke.js';
+import { registerMigrateCommands } from './commands/migrate/index.js';
 import {
   registerMemoryStoreCommand,
   registerMemoryRecallCommand,
@@ -71,6 +72,9 @@ registerMemoryForgetCommand(program);
 
 const knowledgeGroup = program.command('knowledge').description('Knowledge base commands');
 registerKnowledgeUploadCommand(knowledgeGroup);
+
+// Importers from other memory systems
+registerMigrateCommands(program);
 
 registerStatsCommand(program);
 registerReplCommand(program);
