@@ -62,12 +62,15 @@ full context, because the store already contains distilled facts rather than raw
 turns. Full knowledge-update category run in progress; results will be published in
 this file.
 
-First lesson published for transparency: our initial extraction prompt dropped
-event dates from fact content, which hurt temporal-reasoning recall (62.5% vs the
-substrate's 99.2%). Date preservation is now an explicit extraction rule — this is
-exactly the class of extraction loss the [HaluMem](https://arxiv.org/abs/2511.03506)
-benchmark shows affects every memory product (industry-wide extraction recall
-<60%). Measuring it is how it gets fixed.
+Published for transparency: our first intelligence-configuration category run
+(temporal-reasoning) was **invalidated by API-quota exhaustion mid-run** — most
+extraction calls failed with 429s, so its numbers measure an empty wallet, not the
+engine, and are not reported here. Two durable fixes came out of it: the extraction
+prompt now explicitly enforces **date preservation** in fact content (a defense
+against the extraction-loss class that [HaluMem](https://arxiv.org/abs/2511.03506)
+shows affects every memory product), and the LLM client now retries transient
+429/5xx while failing fast on `insufficient_quota`. Clean category runs will be
+published here once completed.
 
 ## Reproduce
 
