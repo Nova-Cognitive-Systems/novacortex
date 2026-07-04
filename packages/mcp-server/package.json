@@ -1,6 +1,6 @@
 {
   "name": "@novacortex/mcp",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "description": "NovaCortex MCP server \u2014 self-hosted, graph-native memory for AI agents (Claude Code, Cursor, Claude Desktop)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

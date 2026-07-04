@@ -3,10 +3,12 @@
 All notable changes to NovaCortex are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/); this project uses semantic versioning.
 
-## [Unreleased]
+## [1.3.0] — 2026-07-04
 
 v1.3 "Intelligence": the LLM-driven memory intelligence layer (opt-in, local-first)
-plus its foundation.
+plus its foundation — and the first published LongMemEval results
+(65.6% overall / 99.2% retrieval recall@10 in the zero-LLM-tax substrate
+configuration; see `docs/benchmarks/longmemeval.md`).
 
 ### Added
 - **Memory intelligence layer** (opt-in via `LLM_MODEL`; works with any

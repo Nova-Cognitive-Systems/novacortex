@@ -27,7 +27,7 @@ import {
   registerReplCommand,
 } from './commands/memory/index.js';
 
-const pkg = { name: 'novacortex', version: '1.0.0' };
+const pkg = { name: 'novacortex', version: '1.3.0' };
 
 const program = new Command()
   .name(pkg.name)

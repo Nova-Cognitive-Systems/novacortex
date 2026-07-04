@@ -149,7 +149,7 @@ services:
   # NovaCortex API  (port 3001, exposed for Unraid)
   # ============================================
   api:
-    image: ghcr.io/nova-cognitive-systems/novacortex-api:${NOVACORTEX_VERSION:-1.2.1}
+    image: ghcr.io/nova-cognitive-systems/novacortex-api:${NOVACORTEX_VERSION:-1.3.0}
     container_name: novacortex-api
     restart: unless-stopped
     networks:
@@ -214,7 +214,7 @@ services:
   # NovaCortex Web UI  (port 3000, exposed for Unraid)
   # ============================================
   web:
-    image: ghcr.io/nova-cognitive-systems/novacortex-web:${NOVACORTEX_VERSION:-1.2.1}
+    image: ghcr.io/nova-cognitive-systems/novacortex-web:${NOVACORTEX_VERSION:-1.3.0}
     container_name: novacortex-web
     restart: unless-stopped
     networks:
