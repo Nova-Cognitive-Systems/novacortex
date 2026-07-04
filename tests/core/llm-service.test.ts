@@ -106,9 +106,38 @@ describe('LLMService', () => {
     expect(await svc.completeJSON('sys', 'user')).toBeNull();
   });
 
-  it('returns null on endpoint errors instead of throwing', async () => {
-    globalThis.fetch = vi.fn(async () => ({ ok: false, status: 500, json: async () => ({}) })) as unknown as typeof fetch;
-    const svc = new LLMService({ apiKey: 'sk-x', model: 'm' });
+  it('returns null on persistent endpoint errors after retries, without throwing', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 500, json: async () => ({}) }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const svc = new LLMService({ apiKey: 'sk-x', model: 'm', retryBaseMs: 1 });
     expect(await svc.complete([{ role: 'user', content: 'x' }])).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(4); // exhausted retries
+  });
+
+  it('retries transient 429s with backoff and succeeds', async () => {
+    let calls = 0;
+    globalThis.fetch = vi.fn(async () => {
+      calls++;
+      if (calls < 3) {
+        return { ok: false, status: 429, json: async () => ({ error: { code: 'rate_limit_exceeded' } }) } as unknown as Response;
+      }
+      return { ok: true, json: async () => ({ choices: [{ message: { content: 'recovered' } }] }) } as unknown as Response;
+    }) as unknown as typeof fetch;
+
+    const svc = new LLMService({ apiKey: 'sk-x', model: 'm', retryBaseMs: 1 });
+    expect(await svc.complete([{ role: 'user', content: 'x' }])).toBe('recovered');
+    expect(calls).toBe(3);
+  });
+
+  it('fails fast on insufficient_quota (no retries — an empty account stays empty)', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 429,
+      json: async () => ({ error: { code: 'insufficient_quota', message: 'You exceeded your current quota' } }),
+    }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const svc = new LLMService({ apiKey: 'sk-x', model: 'm', retryBaseMs: 1 });
+    expect(await svc.complete([{ role: 'user', content: 'x' }])).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

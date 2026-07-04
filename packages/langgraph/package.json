@@ -1,0 +1,41 @@
+{
+  "name": "@novacortex/langgraph",
+  "version": "1.3.0",
+  "description": "A LangGraph BaseStore backed by your self-hosted NovaCortex deployment \u2014 long-term, semantically searchable memory for LangGraph agents",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Nova-Cognitive-Systems/novacortex.git",
+    "directory": "packages/langgraph"
+  },
+  "keywords": [
+    "langgraph",
+    "langchain",
+    "store",
+    "memory",
+    "ai-agents",
+    "self-hosted"
+  ],
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@novacortex/sdk": "^0.2.0",
+    "@langchain/langgraph-checkpoint": "^1.1.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

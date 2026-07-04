@@ -1,7 +1,7 @@
 {
   "name": "@novacortex/sdk",
-  "version": "0.1.0",
-  "description": "Official TypeScript/JavaScript SDK for NovaCortex — the self-hosted AI memory layer",
+  "version": "0.2.0",
+  "description": "Official TypeScript/JavaScript SDK for NovaCortex \u2014 the self-hosted AI memory layer",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

@@ -55,6 +55,9 @@ const UpdateMemorySchema = z.object({
   entities: z.array(EntitySchema).optional(),
   signals: z.array(SignalSchema).optional(),
   salience: z.number().min(0).max(10).optional(),
+  // Append-only supersession marker (ISO datetime to set, null to clear) —
+  // lets importers preserve bi-temporal history from other systems.
+  invalidatedAt: z.coerce.date().nullable().optional(),
 });
 
 // Coerce single string or array to array (Express sends single query param as string)

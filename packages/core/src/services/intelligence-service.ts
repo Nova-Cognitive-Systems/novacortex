@@ -87,6 +87,7 @@ Rules:
 - Extract stable facts, preferences, decisions, constraints, and how-to knowledge. Resolve pronouns ("I" -> the user, or the speaker's name when given).
 - semantic = facts/preferences ("The user prefers dark mode"). episodic = dated events ("On 2026-07-01 the deploy failed"). procedural = how-to/workflow knowledge.
 - Include concrete values (names, dates, versions, numbers) in the content.
+- PRESERVE TIME: when a message carries a timestamp (shown in [brackets]) and the fact describes an event, activity, change, or anything a "when/how long ago/what was first" question could ask about, write the date INTO the fact content (e.g. "On 2023-05-20 the user adopted a rescue dog"). A fact without its date cannot answer temporal questions later.
 - salience: 8-10 lasting identity/decisions, 5-7 useful context, 1-4 minor detail.
 - Do NOT extract: small talk, questions without answers, speculation, transient state ("compiling right now"), or anything the speaker asked to forget.
 - No duplicates within your output. If nothing is worth remembering, return {"facts": []}.

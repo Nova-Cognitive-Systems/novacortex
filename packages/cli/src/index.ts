@@ -12,6 +12,7 @@ import { registerProfileRenameCommand } from './commands/profile/rename.js';
 import { registerTokensListCommand } from './commands/admin/tokens/list.js';
 import { registerTokensCreateCommand } from './commands/admin/tokens/create.js';
 import { registerTokensRevokeCommand } from './commands/admin/tokens/revoke.js';
+import { registerMigrateCommands } from './commands/migrate/index.js';
 import {
   registerMemoryStoreCommand,
   registerMemoryRecallCommand,
@@ -26,7 +27,7 @@ import {
   registerReplCommand,
 } from './commands/memory/index.js';
 
-const pkg = { name: 'novacortex', version: '1.0.0' };
+const pkg = { name: 'novacortex', version: '1.3.0' };
 
 const program = new Command()
   .name(pkg.name)
@@ -71,6 +72,9 @@ registerMemoryForgetCommand(program);
 
 const knowledgeGroup = program.command('knowledge').description('Knowledge base commands');
 registerKnowledgeUploadCommand(knowledgeGroup);
+
+// Importers from other memory systems
+registerMigrateCommands(program);
 
 registerStatsCommand(program);
 registerReplCommand(program);
