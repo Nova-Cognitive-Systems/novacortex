@@ -47,12 +47,13 @@ OPENAI_API_KEY=... node scripts/benchmark/longmemeval/run.mjs \
 OPENAI_API_KEY=... node scripts/benchmark/longmemeval/run.mjs \
   --data longmemeval_s.json --mode intelligence --llm gpt-4o-mini
 
-# fully local (privacy-path numbers): point everything at Ollama
+# fully local (privacy-path numbers): embeddings/reader/extraction on Ollama,
+# judge pinned to a frontier model via its own endpoint for comparability
 OPENAI_API_KEY=ollama OPENAI_BASE_URL=http://localhost:11434/v1 \
 EMBEDDING_MODEL=nomic-embed-text \
+JUDGE_BASE_URL=https://api.openai.com/v1 JUDGE_API_KEY=sk-... \
 node scripts/benchmark/longmemeval/run.mjs --data longmemeval_s.json \
-  --mode intelligence --llm qwen3:8b --reader qwen3:8b
-# (judge should stay a fixed frontier model for comparability)
+  --mode substrate --reader qwen3:8b --judge gpt-4o
 ```
 
 Flags: `--subset N`, `--categories a,b`, `--topk` (default 10), `--concurrency`
