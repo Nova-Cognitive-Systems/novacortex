@@ -32,6 +32,11 @@ services:
     image: surrealdb/surrealdb:v2.2
     container_name: novacortex-surrealdb
     restart: unless-stopped
+    # Root inside the container: appdata bind mounts are root-owned on
+    # Unraid/most Docker hosts, and data written by earlier deployments
+    # (pre-v1.3) is root-owned — without this, RocksDB fails with
+    # "Permission denied" on upgrade. Matches the dev/dokploy variants.
+    user: "0:0"
     networks:
       - novacortex
     command:
