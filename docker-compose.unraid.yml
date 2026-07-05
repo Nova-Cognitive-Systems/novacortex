@@ -126,6 +126,13 @@ services:
     profiles: ["local-ai"]
     networks:
       - novacortex
+    environment:
+      # Ollama's silent default is a 4k context window — too small for the
+      # reader/ingest prompts this stack produces (retrieved context easily
+      # exceeds it, and Ollama TRUNCATES silently, which looks like "the
+      # model can't find anything"). 16k fits alongside qwen3:8b in ~10GB VRAM.
+      - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-16384}
+      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-30m}
     volumes:
       - ollama-models:/root/.ollama
     healthcheck:
