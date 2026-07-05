@@ -56,11 +56,26 @@ Per category:
 The intelligence layer distills history into discrete facts at ingestion time
 (`gpt-4o-mini` extractor, typed `supersedes`/`contradicts` edges, `invalidatedAt`).
 
-Calibration on knowledge-update questions: correct answers from **~350 context
-tokens per query** — ~6× less than the substrate configuration and ~330× less than
-full context, because the store already contains distilled facts rather than raw
-turns. Full knowledge-update category run in progress; results will be published in
-this file.
+**Knowledge-update category, full run (all 78 questions, 2026-07-05),
+results file: `results-intelligence-knowledge-update.json`:**
+
+| Metric | Intelligence config | Substrate config (same category) |
+|---|---|---|
+| Accuracy (GPT-4o judge) | **75.6%** | 82.1% |
+| Session-level retrieval recall@10 | **100%** | 99.2% (overall) |
+| Context tokens per query (avg) | **~356** | ~2,232 |
+| Errors | 1/78 (transient fetch, counted as wrong) | 1/500 |
+
+How to read this honestly: the distilled-facts store achieves **perfect
+evidence recall** on this category at **~6× fewer context tokens** than verbatim
+retrieval (~320× fewer than full context) — the remaining accuracy gap to the
+substrate (−6.5 pts) is NOT a retrieval problem but detail loss in fact
+distillation (the reader sometimes lacks a nuance the verbatim turn carried).
+That is a targeted, improvable extraction-prompt surface, and exactly the
+operation-level behavior the HaluMem benchmark line of work argues should be
+measured. Search latency during this run (p50 ~5.1s) reflects API contention
+with the parallel LLM ingestion on a throttled account, not engine latency —
+see the substrate run's uncontended 674ms p50.
 
 Published for transparency: our first intelligence-configuration category run
 (temporal-reasoning) was **invalidated by API-quota exhaustion mid-run** — most

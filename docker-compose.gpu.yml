@@ -1,0 +1,24 @@
+# ============================================
+# NVIDIA GPU override for the Ollama local-AI sidecar.
+#
+# Prerequisites (Unraid): install the "Nvidia Driver" plugin from Community
+# Apps and verify the card with `nvidia-smi`. On generic Docker hosts install
+# the NVIDIA Container Toolkit.
+#
+# Usage (combine with the base file and the local-ai profile):
+#   docker compose --profile local-ai -f docker-compose.yml -f docker-compose.gpu.yml up -d
+#
+# Ollama detects CUDA automatically once the GPU is passed through. With
+# 16GB VRAM (e.g. RTX 2000 Ada) consider LLM_MODEL=qwen3:14b in .env for
+# better extraction quality (set OLLAMA_PULL accordingly).
+# ============================================
+
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
