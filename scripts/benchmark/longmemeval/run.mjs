@@ -75,15 +75,22 @@ if (!CONFIG.data || !process.env.OPENAI_API_KEY) {
 // OpenAI helpers (reader + judge)
 // ---------------------------------------------------------------------------
 const OPENAI_BASE = (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '');
+// Fully-local runs point OPENAI_BASE_URL at Ollama for embeddings/reader/
+// extraction, but the JUDGE must stay a fixed frontier model for
+// comparability — give it its own endpoint when provided.
+const JUDGE_BASE = (process.env.JUDGE_BASE_URL || OPENAI_BASE).replace(/\/+$/, '');
+const JUDGE_KEY = process.env.JUDGE_API_KEY || process.env.OPENAI_API_KEY;
 let readerTokens = { in: 0, out: 0 };
 let judgeTokens = { in: 0, out: 0 };
 
-async function chat(model, system, user, counter, maxTokens = 512) {
+async function chat(model, system, user, counter, maxTokens = 512, endpoint = null) {
+  const base = endpoint?.base ?? OPENAI_BASE;
+  const key = endpoint?.key ?? process.env.OPENAI_API_KEY;
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
-      const res = await fetch(`${OPENAI_BASE}/chat/completions`, {
+      const res = await fetch(`${base}/chat/completions`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model,
           temperature: 0,
@@ -143,7 +150,7 @@ async function judgeAnswer(question, goldAnswer, hypothesis, isAbstention) {
   const user = isAbstention
     ? `The following question is unanswerable from the assistant's memory — the correct behavior is to acknowledge that the information is not available.\n\nQuestion: ${question}\n\nResponse: ${hypothesis}\n\nDoes the response correctly indicate that the information is not available (rather than fabricating an answer)? Answer yes or no.`
     : `Question: ${question}\n\nCorrect answer: ${goldAnswer}\n\nResponse: ${hypothesis}\n\nDoes the response contain the correct answer? Judge by substance, not wording: numerically equivalent values, the same value with qualifiers like "approximately"/"about", added correct detail (e.g. an exact date alongside the correct duration), and identical orderings count as correct. A different value, missing key information, or a different ordering counts as wrong. Answer yes or no.`;
-  const verdict = (await chat(CONFIG.judge, system, user, judgeTokens, 4)).trim().toLowerCase();
+  const verdict = (await chat(CONFIG.judge, system, user, judgeTokens, 4, { base: JUDGE_BASE, key: JUDGE_KEY })).trim().toLowerCase();
   return verdict.startsWith('yes');
 }
 
