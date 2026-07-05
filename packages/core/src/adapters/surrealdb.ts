@@ -118,6 +118,7 @@ export class SurrealDBAdapter {
       DEFINE INDEX IF NOT EXISTS idx_memory_id_ns ON TABLE memories COLUMNS memoryId, namespace UNIQUE;
       DEFINE INDEX IF NOT EXISTS idx_memory_ns_type ON TABLE memories COLUMNS namespace, memoryType;
       DEFINE INDEX IF NOT EXISTS idx_memory_ns_salience ON TABLE memories COLUMNS namespace, metadata.effectiveSalience;
+      DEFINE INDEX IF NOT EXISTS idx_memory_ns_session ON TABLE memories COLUMNS namespace, metadata.source.sessionId;
     `);
 
     // Create relations table
@@ -597,6 +598,19 @@ export class SurrealDBAdapter {
     }
 
     return memories;
+  }
+
+  /**
+   * All memories of one conversation/session (same source.sessionId) in
+   * chronological order — the substrate for neighbor-turn context expansion.
+   */
+  async findBySession(namespace: string, sessionId: string, limit = 500): Promise<Memory[]> {
+    await this.connect();
+    const result = await this.db.query<[SurrealMemoryRecord[]]>(
+      `SELECT * FROM memories WHERE namespace = $namespace AND metadata.source.sessionId = $sessionId ORDER BY createdAt ASC, id ASC LIMIT $limit`,
+      { namespace, sessionId, limit }
+    );
+    return (result[0] || []).map((r) => this.recordToMemory(r));
   }
 
   async loadRelations(memory: Memory): Promise<Memory> {

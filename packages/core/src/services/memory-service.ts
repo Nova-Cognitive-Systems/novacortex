@@ -439,9 +439,10 @@ export class MemoryService {
     let effQuery = query;
 
     // Deterministic temporal normalization (opt-in): "last week", "3 days ago"
-    // → createdAfter filter. Explicit temporal options always win.
+    // → createdAfter filter. Explicit temporal options always win. The
+    // reference instant is configurable for replayed/imported history.
     if (options.parseTemporal && !options.createdAfter && !options.asOf) {
-      const parsed = parseTemporalQuery(query);
+      const parsed = parseTemporalQuery(query, options.temporalReference ?? new Date());
       if (parsed.createdAfter) {
         effOptions = { ...effOptions, createdAfter: parsed.createdAfter };
         effQuery = parsed.cleaned;
@@ -618,6 +619,70 @@ export class MemoryService {
     }
     if (window.postProcess) {
       enrichedResults = enrichedResults.slice(window.offset, window.offset + window.limit);
+    }
+
+    // Resolve superseded results to their current version: a result carrying
+    // an incoming supersedes edge is replaced by the tip of its chain. Catches
+    // results that predate invalidation stamping or were requested with
+    // includeInvalidated — the reader should see the CURRENT value.
+    if (options.resolveToCurrent && enrichedResults.length > 0) {
+      const resolved = await Promise.all(
+        enrichedResults.map(async (r) => {
+          const current = await this.getCurrentFact(r.memory.id).catch(() => null);
+          if (current && current.superseded) {
+            return {
+              ...r,
+              memory: current.current,
+              ...(options.explain
+                ? { trace: [...(r.trace ?? []), `superseded ×${current.chain.length - 1} → resolved to current version`] }
+                : {}),
+            };
+          }
+          return r;
+        })
+      );
+      // Chain tips can collide (old and new version both retrieved) — dedupe.
+      const seenIds = new Set<string>();
+      enrichedResults = resolved.filter((r) => {
+        const key = `${r.memory.id.namespace}:${r.memory.id.id}`;
+        if (seenIds.has(key)) return false;
+        seenIds.add(key);
+        return true;
+      });
+    }
+
+    // Neighbor-turn context expansion: append the surrounding turns of each
+    // hit's session (chronological) after the ranked page. Session-level
+    // retrieval is usually right even when the exact answer-bearing turn is
+    // not in the page — this closes that gap.
+    const expandTurns = Math.min(Math.max(options.expandTurns ?? 0, 0), 3);
+    if (expandTurns > 0 && enrichedResults.length > 0) {
+      const inResults = new Set(enrichedResults.map((r) => `${r.memory.id.namespace}:${r.memory.id.id}`));
+      const sessionCache = new Map<string, Memory[]>();
+      const neighbors: SearchResult[] = [];
+      for (const r of enrichedResults) {
+        const sessionId = r.memory.metadata.source.sessionId;
+        if (!sessionId) continue;
+        const cacheKey = `${r.memory.id.namespace}:${sessionId}`;
+        let session = sessionCache.get(cacheKey);
+        if (!session) {
+          session = await this.surrealdb.findBySession(r.memory.id.namespace, sessionId);
+          sessionCache.set(cacheKey, session);
+        }
+        const idx = session.findIndex((m) => m.id.id === r.memory.id.id);
+        if (idx < 0) continue;
+        for (const neighbor of session.slice(Math.max(0, idx - expandTurns), idx + expandTurns + 1)) {
+          const key = `${neighbor.id.namespace}:${neighbor.id.id}`;
+          if (inResults.has(key)) continue;
+          if (neighbor.invalidatedAt && !options.includeInvalidated && !options.asOf) continue;
+          inResults.add(key);
+          neighbors.push({
+            memory: neighbor,
+            ...(options.explain ? { trace: [`neighbor turn (±${expandTurns}) of a hit in session ${sessionId}`] } : {}),
+          });
+        }
+      }
+      enrichedResults = [...enrichedResults, ...neighbors];
     }
 
     // Optional relation hydration so callers can detect conflicts/supersessions
