@@ -63,7 +63,7 @@ const CONFIG = {
   surrealPass: process.env.SURREALDB_PASS ?? 'root',
   qdrantUrl: process.env.QDRANT_URL ?? 'http://localhost:6333',
   collection: args.collection ?? 'lme_bench',
-  vectorSize: 1536,
+  vectorSize: parseInt(args.vectorSize ?? process.env.QDRANT_VECTOR_SIZE ?? '1536', 10),
 };
 
 if (!CONFIG.data || !process.env.OPENAI_API_KEY) {
