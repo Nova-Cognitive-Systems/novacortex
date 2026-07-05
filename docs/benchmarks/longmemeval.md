@@ -38,6 +38,38 @@ substantive mismatches still fail). The v1.3.0 baseline below used the stricter
 original wording; the equivalence change accounts for roughly +1–2 of the
 +14.4 points. Both judge prompts ship in the harness.
 
+## Fully-local run — 63.4% on a 70-watt mini server (2026-07-06)
+
+The privacy-path number nobody else publishes: the complete pipeline on
+self-host hardware (Unraid, NVIDIA RTX 2000 Ada 16GB, ~70W). Embeddings
+(`nomic-embed-text`, 768-dim) and reader (`qwen3:8b` via the Ollama sidecar,
+`local-ai` compose profile) run on the GPU — **no memory content ever leaves
+the machine**. Only the judge is pinned to `gpt-4o` (separate endpoint,
+`JUDGE_BASE_URL`) for grading comparability. Results file:
+`results-substrate-local-qwen8b.json`.
+
+| Metric | Fully local (qwen3:8b reader) | v1.3.1 cloud (gpt-4o reader) |
+|---|---|---|
+| **Accuracy (overall)** | **63.4%** | 80.0% |
+| Session-level retrieval recall@10 | **98.6%** (local embeddings!) | 99.2% |
+| Search latency p50 / p95 | **638ms / 1,041ms** | 3,034ms* |
+| temporal-reasoning | 72.2% | 81.2% |
+| knowledge-update | 66.7% | 93.6% |
+| multi-session | 42.9% | 72.2% |
+| single-session user / assistant | 84.3% / 87.5% | 97.1% / 89.3% |
+| Errors | 0/500 | 1/500 |
+
+\* cloud p50 measured under judge/reader API contention.
+
+How to read it: **63.4% fully offline beats the paper's full-context GPT-4o
+baseline (60.2%)** — a local 8B model with NovaCortex retrieval outperforms a
+frontier model that gets the entire 115k-token history. The engine loses
+almost nothing to localness (recall 98.6% vs 99.2%; search is actually
+*faster* on-box); the accuracy gap to the cloud run is purely reader
+capability (multi-hop reasoning at 8B). Known limits stay visible: multi-session
+aggregation and the preference category are reader-bound. Total energy for the
+500-question run: roughly a night at ≤70W — about the power of a light bulb.
+
 ## v1.3.0 baseline: retrieval-substrate configuration (full 500 questions)
 
 Verbatim session-decomposed ingestion (turn-level, date-prefixed), **no LLM at
