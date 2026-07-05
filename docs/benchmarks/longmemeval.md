@@ -9,7 +9,36 @@ Dataset: [`longmemeval_s_cleaned`](https://huggingface.co/datasets/xiaowu0162/lo
 (the maintainer's cleaned revision). Harness: [`scripts/benchmark/longmemeval/`](../../scripts/benchmark/longmemeval/)
 — fully reproducible, raw per-question outputs published alongside the summaries.
 
-## Headline: retrieval-substrate configuration (full 500 questions)
+## Headline: v1.3.1 configuration — 80.0% (gpt-4o reader)
+
+Full 500-question run (2026-07-05) with the v1.3.1 accuracy features
+(`expandTurns: 2` neighbor-turn expansion, evidence-first reader protocol,
+equivalence-aware judge — see disclosure below) and a `gpt-4o` reader,
+results file: `results-substrate-v131-gpt4o.json`:
+
+| Metric | v1.3.1 (gpt-4o reader) | v1.3.0 baseline (gpt-4o-mini) |
+|---|---|---|
+| **Accuracy (overall)** | **80.0%** | 65.6% |
+| temporal-reasoning | **81.2%** | 51.1% |
+| knowledge-update | **93.6%** | 82.1% |
+| multi-session | **72.2%** | 55.6% |
+| single-session user / assistant | 97.1% / 89.3% | 94.3% / 92.9% |
+| single-session-preference | 16.7% | 13.3% |
+| **Session-level retrieval recall@10** | **99.2%** | 99.2% |
+| Context tokens/query (avg) | ~5,893 (−95% vs full context) | ~2,232 (−98%) |
+
+For reference (self-reported, not run by us): Zep reports **71.2%** and the
+full-context baseline **60.2%** — both measured with a gpt-4o reader, the same
+reader class as this run. `single-session-preference` remains the known open
+weakness (the question requires adopting a preference, not recalling a fact).
+
+**Judge disclosure:** this run grades with an equivalence-aware variant of the
+official judge (numeric/approximation/order equivalence counts as correct;
+substantive mismatches still fail). The v1.3.0 baseline below used the stricter
+original wording; the equivalence change accounts for roughly +1–2 of the
++14.4 points. Both judge prompts ship in the harness.
+
+## v1.3.0 baseline: retrieval-substrate configuration (full 500 questions)
 
 Verbatim session-decomposed ingestion (turn-level, date-prefixed), **no LLM at
 write time**, hybrid (dense + BM25, server-side RRF) retrieval, top-10.
