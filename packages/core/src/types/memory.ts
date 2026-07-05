@@ -285,6 +285,26 @@ export interface SearchOptions {
    * graph boost, recency blend, rerank score, supersession state).
    */
   explain?: boolean;
+  /**
+   * Neighbor-turn context expansion: for each hit that belongs to a session
+   * (source.sessionId), also return up to N preceding and N following
+   * memories of the same session (chronological, deduplicated, clamped to 3).
+   * Session-level retrieval is usually right even when the exact turn is not
+   * in the page — this closes that gap without raising the ranking limit.
+   */
+  expandTurns?: number;
+  /**
+   * Resolve superseded results to their CURRENT version: any result that
+   * carries an incoming `supersedes` edge is replaced by the tip of its
+   * supersedes chain (deduplicated). Deterministic, zero LLM at read time.
+   */
+  resolveToCurrent?: boolean;
+  /**
+   * Reference instant for `parseTemporal` (defaults to now). Essential when
+   * querying replayed/imported history where "last week" must be interpreted
+   * relative to the conversation's own timeline, not the wall clock.
+   */
+  temporalReference?: Date;
 }
 
 export interface VectorSearchOptions extends SearchOptions {

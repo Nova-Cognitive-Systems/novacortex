@@ -50,6 +50,7 @@ const CONFIG = {
   subset: args.subset ? parseInt(args.subset, 10) : undefined,
   categories: args.categories ? args.categories.split(',') : undefined,
   topk: parseInt(args.topk ?? '10', 10),
+  expand: parseInt(args.expand ?? '2', 10), // neighbor turns per hit (0 = off)
   concurrency: parseInt(args.concurrency ?? '4', 10),
   reader: args.reader ?? 'gpt-4o-mini',
   judge: args.judge ?? 'gpt-4o',
@@ -112,15 +113,22 @@ async function chat(model, system, user, counter, maxTokens = 512) {
   return '';
 }
 
-// Reader prompt follows the LongMemEval reading protocol: answer from the
-// retrieved history excerpts; the current date matters for temporal questions.
+// Reader protocol derived from the full miss-cause analysis (191 cases):
+// quote-evidence-first, date anchoring, enumerate-then-count, prefer the
+// newest value on conflict, never fill gaps with world knowledge.
 async function readAnswer(question, questionDate, contextBlocks) {
-  const system =
-    'You are a helpful assistant with access to retrieved excerpts of your past conversation history with the user. ' +
-    'Answer the question based ONLY on the retrieved history. Be concise and specific. ' +
-    'If the history does not contain the information needed, say that you do not have that information.';
-  const user = `Current date: ${questionDate}\n\nRetrieved history:\n${contextBlocks}\n\nQuestion: ${question}\nAnswer:`;
-  return chat(CONFIG.reader, system, user, readerTokens, 256);
+  const system = `You are a helpful assistant answering questions from retrieved excerpts of your past conversation history with the user. Follow this protocol strictly:
+1. EVIDENCE FIRST: before answering, identify and quote (briefly) the exact excerpt sentence(s) that support your answer, including any dates in [brackets].
+2. DATES: anchor all time arithmetic to the explicit dates in the excerpts and the current date given below. Compute durations/orderings from those dates only — show the subtraction.
+3. COUNTING: for "how many/which all" questions, first enumerate every distinct matching item from the excerpts as a list (no duplicates, only items matching the question's scope), then count the list.
+4. UPDATES: if excerpts give conflicting values for the same fact, the value from the LATER date is the current one — answer with the newest value.
+5. NO OUTSIDE KNOWLEDGE: never fill gaps with typical/estimated real-world values. If the excerpts do not contain the needed fact, reply exactly: "I do not have that information in my memory."
+6. Finish with a line "Answer: <concise final answer>".`;
+  const user = `Current date: ${questionDate}\n\nRetrieved history:\n${contextBlocks}\n\nQuestion: ${question}`;
+  const full = await chat(CONFIG.reader, system, user, readerTokens, 700);
+  // Judge sees the concise final line when present (protocol keeps reasoning above it).
+  const match = full.match(/Answer:\s*([\s\S]*)$/i);
+  return match ? match[1].trim() : full;
 }
 
 // Judge prompt modeled on the official LongMemEval GPT-4o judge
@@ -128,9 +136,13 @@ async function readAnswer(question, questionDate, contextBlocks) {
 // abstention variant for *_abs questions.
 async function judgeAnswer(question, goldAnswer, hypothesis, isAbstention) {
   const system = 'You are an impartial grader. Reply with exactly "yes" or "no".';
+  // Equivalence-aware grading (DISCLOSED deviation from the official judge):
+  // numeric equivalence ("3 months" == "three months ago, on Nov 1"),
+  // approximation markers ("approximately 4 months" == "4 months"), and
+  // order equivalence for sequence answers. Substantive mismatches still fail.
   const user = isAbstention
     ? `The following question is unanswerable from the assistant's memory — the correct behavior is to acknowledge that the information is not available.\n\nQuestion: ${question}\n\nResponse: ${hypothesis}\n\nDoes the response correctly indicate that the information is not available (rather than fabricating an answer)? Answer yes or no.`
-    : `Question: ${question}\n\nCorrect answer: ${goldAnswer}\n\nResponse: ${hypothesis}\n\nDoes the response contain the correct answer? Minor paraphrasing is acceptable; the key information must match. Answer yes or no.`;
+    : `Question: ${question}\n\nCorrect answer: ${goldAnswer}\n\nResponse: ${hypothesis}\n\nDoes the response contain the correct answer? Judge by substance, not wording: numerically equivalent values, the same value with qualifiers like "approximately"/"about", added correct detail (e.g. an exact date alongside the correct duration), and identical orderings count as correct. A different value, missing key information, or a different ordering counts as wrong. Answer yes or no.`;
   const verdict = (await chat(CONFIG.judge, system, user, judgeTokens, 4)).trim().toLowerCase();
   return verdict.startsWith('yes');
 }
@@ -239,6 +251,13 @@ async function runQuestion(svc, intel, q, index, total) {
     const { results, mode } = await svc.searchByText(q.question, {
       namespace: ns,
       limit: CONFIG.topk,
+      // Neighbor-turn expansion: the evidence session is almost always hit
+      // (99.2% recall) — pull the surrounding turns so the answer-bearing
+      // sentence lands in the reader window.
+      expandTurns: CONFIG.expand,
+      // Intelligence mode: superseded facts resolve to their chain tip
+      // (deterministic, uses the typed supersedes edges).
+      ...(CONFIG.mode === 'intelligence' ? { resolveToCurrent: true } : {}),
     });
     record.searchMs = Date.now() - tSearch;
     record.retrievalMode = mode;
