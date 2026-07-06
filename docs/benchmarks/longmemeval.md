@@ -38,6 +38,34 @@ substantive mismatches still fail). The v1.3.0 baseline below used the stricter
 original wording; the equivalence change accounts for roughly +1–2 of the
 +14.4 points. Both judge prompts ship in the harness.
 
+## Reader sweep: two frontier readers, same 80.0% (2026-07-06)
+
+Same v1.3.1 configuration, reader swapped to `gpt-5-mini` (the reader class
+mem0 measures its headline with; `reasoning_effort: low`). Result file:
+`results-substrate-v131-gpt5mini.json`.
+
+| Category | gpt-5-mini reader | gpt-4o reader |
+|---|---|---|
+| **Overall** | **80.0%** | **80.0%** |
+| single-session-preference | **33.3%** | 16.7% |
+| single-session-assistant | 94.6% | 89.3% |
+| multi-session | 66.9% | 72.2% |
+| temporal-reasoning | 81.2% | 81.2% |
+| knowledge-update | 92.3% | 93.6% |
+| Retrieval recall@10 | 99.0% | 99.2% |
+| Active wall clock | 2h46m (~20s/question, concurrency 5) | ~7–8h |
+| Reader cost | ~$1.30 | ~$10 |
+
+Two very different frontier readers landing on the same overall score says
+the system is **reader-saturated at ~80%** in this configuration: the
+remaining gap is not reader capability but the documented system limits
+(multi-session aggregation, the preference category, the last retrieval
+percent). On mem0 comparability: mem0 self-reports 94.4 with this reader
+class through its own (non-public, community-criticized) evaluation
+framework; our number is measured by us, with published raw records, a
+disclosed judge, and a reproducible harness — we compare readers, not
+marketing numbers.
+
 ## Fully-local run — 63.4% on a 70-watt mini server (2026-07-06)
 
 The privacy-path number nobody else publishes: the complete pipeline on
