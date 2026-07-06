@@ -83,6 +83,8 @@ const JUDGE_KEY = process.env.JUDGE_API_KEY || process.env.OPENAI_API_KEY;
 let readerTokens = { in: 0, out: 0 };
 let judgeTokens = { in: 0, out: 0 };
 
+const RUN_STARTED_AT = Date.now();
+
 async function chat(model, system, user, counter, maxTokens = 512, endpoint = null) {
   const base = endpoint?.base ?? OPENAI_BASE;
   const key = endpoint?.key ?? process.env.OPENAI_API_KEY;
@@ -91,14 +93,19 @@ async function chat(model, system, user, counter, maxTokens = 512, endpoint = nu
       const res = await fetch(`${base}/chat/completions`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+        // GPT-5-family (reasoning) models reject `temperature` overrides and
+        // `max_tokens` — they take `max_completion_tokens` (which also covers
+        // hidden reasoning tokens, so give generous headroom) plus
+        // `reasoning_effort`. Older chat models keep the classic fields.
         body: JSON.stringify({
           model,
-          temperature: 0,
-          max_tokens: maxTokens,
           messages: [
             { role: 'system', content: system },
             { role: 'user', content: user },
           ],
+          ...(/^(gpt-5|o[0-9])/.test(model)
+            ? { max_completion_tokens: Math.max(maxTokens * 4, 2000), reasoning_effort: 'low' }
+            : { temperature: 0, max_tokens: maxTokens }),
         }),
         signal: AbortSignal.timeout(120_000),
       });
@@ -348,8 +355,16 @@ async function main() {
     if (r.correct) byType[r.question_type].correct++;
   }
   const searchLat = valid.map((r) => r.searchMs).sort((a, b) => a - b);
+  const wallMs = Date.now() - RUN_STARTED_AT;
   const summary = {
     config: publicConfig(),
+    // Wall-clock of the whole run — processing time is part of the result.
+    timing: {
+      startedAt: new Date(RUN_STARTED_AT).toISOString(),
+      finishedAt: new Date().toISOString(),
+      wallClockMinutes: Math.round(wallMs / 60000),
+      avgSecondsPerQuestion: done.length ? Math.round(wallMs / 1000 / done.length) : 0,
+    },
     n: done.length,
     errors: done.filter((r) => r.error).length,
     accuracy: done.length ? done.filter((r) => r.correct).length / done.length : 0,
