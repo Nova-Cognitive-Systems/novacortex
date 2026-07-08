@@ -3,6 +3,18 @@
 All notable changes to NovaCortex are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/); this project uses semantic versioning.
 
+## [1.3.2] — 2026-07-08
+
+### Changed
+- Web UI: the instance root now goes straight to sign-in (already-authenticated
+  sessions forward to the dashboard) — an instance is an app, not a brochure;
+  the marketing landing (with its "Self-Host Free" CTA) no longer renders on
+  customer/self-host instances.
+- Web UI: app theme aligned with the NovaCortex brand — dark #0a0e17 default,
+  #111827 cards, cyan primary/accent, magenta destructive, Outfit body +
+  Chakra Petch display type (one look across novacortex.dev, the account
+  area, and every instance).
+
 ## [1.3.1] — 2026-07-08
 
 Accuracy features from the full LongMemEval miss analysis, deployment fixes

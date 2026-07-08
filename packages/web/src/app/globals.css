@@ -31,57 +31,59 @@
   --radius-sm-val: 0.25rem;   /* 4px */
   --radius-md-val: 0.25rem;   /* 4px */
   --radius-lg-val: 0.5rem;    /* 8px */
-  --font-sans-family: var(--font-sans), 'DM Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-sans-family: 'Outfit', var(--font-sans), 'DM Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-display-family: 'Chakra Petch', 'Outfit', ui-sans-serif, sans-serif;
   --font-mono-family: var(--font-mono), 'DM Mono', ui-monospace, monospace;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --duration-fast: 0.15s;
   --duration-base: 0.3s;
 }
 
-/* ── Light (default) ── */
-:root, .light {
-  --background: 40 33% 97%;
-  --foreground: 0 0% 7%;
-  --card: 0 0% 100%;
-  --card-foreground: 0 0% 7%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 0 0% 7%;
-  --primary: 0 0% 7%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 40 20% 95%;
-  --secondary-foreground: 0 0% 7%;
-  --muted: 40 20% 95%;
-  --muted-foreground: 60 1% 47%;
-  --accent: 21 100% 50%;
-  --accent-foreground: 0 0% 100%;
-  --destructive: 0 74% 44%;
+/* ── NovaCortex dark (default) — matches novacortex.dev + the account area:
+   bg #0a0e17, cards #111827, cyan #00f0ff, magenta #ff2d95, Outfit/Chakra. ── */
+:root, .dark {
+  --background: 221 39% 6%;
+  --foreground: 196 53% 88%;
+  --card: 220 41% 11%;
+  --card-foreground: 196 53% 88%;
+  --popover: 220 41% 11%;
+  --popover-foreground: 196 53% 88%;
+  --primary: 184 100% 50%;
+  --primary-foreground: 221 39% 6%;
+  --secondary: 219 35% 14%;
+  --secondary-foreground: 196 53% 88%;
+  --muted: 219 35% 14%;
+  --muted-foreground: 195 30% 55%;
+  --accent: 184 100% 50%;
+  --accent-foreground: 221 39% 6%;
+  --destructive: 330 100% 59%;
   --destructive-foreground: 0 0% 100%;
-  --border: 40 12% 86%;
-  --input: 0 0% 100%;
-  --ring: 21 100% 50%;
+  --border: 200 45% 16%;
+  --input: 220 40% 9%;
+  --ring: 184 100% 50%;
 }
 
-/* ── Dark ── */
-.dark {
-  --background: 0 0% 7%;
-  --foreground: 40 20% 95%;
-  --card: 0 0% 10%;
-  --card-foreground: 40 20% 95%;
-  --popover: 0 0% 10%;
-  --popover-foreground: 40 20% 95%;
-  --primary: 40 33% 97%;
-  --primary-foreground: 0 0% 7%;
-  --secondary: 0 0% 15%;
-  --secondary-foreground: 40 20% 95%;
-  --muted: 0 0% 15%;
-  --muted-foreground: 40 12% 60%;
-  --accent: 21 100% 50%;
+/* ── Light (optional) — same brand hues on paper white. ── */
+.light {
+  --background: 197 40% 98%;
+  --foreground: 220 40% 10%;
+  --card: 0 0% 100%;
+  --card-foreground: 220 40% 10%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 220 40% 10%;
+  --primary: 190 95% 30%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 197 35% 94%;
+  --secondary-foreground: 220 40% 10%;
+  --muted: 197 35% 94%;
+  --muted-foreground: 200 20% 40%;
+  --accent: 190 95% 30%;
   --accent-foreground: 0 0% 100%;
-  --destructive: 0 74% 55%;
+  --destructive: 330 85% 45%;
   --destructive-foreground: 0 0% 100%;
-  --border: 0 0% 18%;
-  --input: 0 0% 12%;
-  --ring: 21 100% 50%;
+  --border: 197 25% 86%;
+  --input: 0 0% 100%;
+  --ring: 190 95% 30%;
 }
 
 /* ── Base ── */
@@ -98,16 +100,19 @@ body {
 
 /* ── Typography ── */
 h1 {
-  font-size: 2.25rem;
-  font-weight: 400;
-  line-height: 1.0;
-  letter-spacing: -0.05em;
+  font-family: var(--font-display-family);
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 h2 {
-  font-size: 1.5rem;
-  font-weight: 400;
-  line-height: 1.0;
-  letter-spacing: -0.03em;
+  font-family: var(--font-display-family);
+  font-size: 1.35rem;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: 0.03em;
 }
 h3 {
   font-size: 1.25rem;
