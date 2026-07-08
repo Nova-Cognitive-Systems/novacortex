@@ -281,7 +281,9 @@ describe('Export/Import', () => {
     }>(`/memories/export/${namespace}/pmf`);
     expect(status).toBe(200);
     expect(data.header.magic).toBe('NCPMF');
-    expect(data.header.version).toBe('1.0');
+    // PMF v1.1 since the append-only supersession work (invalidation history
+    // is integrity-covered); 1.0 was the pre-v1.3 header.
+    expect(data.header.version).toBe('1.1');
     expect(data.header.integrity.memoryCount).toBeGreaterThanOrEqual(2);
     expect(data.graph.nodes).toBeGreaterThanOrEqual(2);
   });

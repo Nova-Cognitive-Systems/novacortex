@@ -3,6 +3,37 @@
 All notable changes to NovaCortex are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/); this project uses semantic versioning.
 
+## [1.3.1] — 2026-07-08
+
+Accuracy features from the full LongMemEval miss analysis, deployment fixes
+from real self-host installs, and the published benchmark trilogy.
+
+### Added
+- `expandTurns` search option: neighbor-turn context expansion per hit
+  session (SurrealDB `findBySession` + namespace/sessionId index).
+- `resolveToCurrent` search option: supersedes-chain tip resolution in
+  results (deterministic, zero LLM at read time).
+- `temporalReference` search option: `parseTemporal` anchoring for
+  replayed/imported history.
+- `docker-compose.gpu.yml`: NVIDIA GPU override for the Ollama local-AI
+  sidecar (Unraid & generic Docker hosts).
+- Benchmarks: LongMemEval_S published — 80.0% overall with gpt-4o AND
+  gpt-5-mini readers (reader-saturated), 63.4% fully local on a 70W GPU
+  (beats the 60.2% full-context GPT-4o baseline), 75.6% intelligence
+  configuration at ~6x fewer context tokens; raw records in-repo.
+- Benchmark harness: split judge endpoint (JUDGE_BASE_URL/JUDGE_API_KEY),
+  GPT-5-family reader support, configurable vector size, wall-clock timing
+  in the summary.
+
+### Fixed
+- Compose: SurrealDB now runs as root in the supported variants — unbreaks
+  the documented upgrade path from pre-v1.3 deployments (root-owned appdata
+  caused a RocksDB "Permission denied" crash loop).
+- local-ai profile: Ollama context window raised to 16k
+  (`OLLAMA_CONTEXT_LENGTH`, overridable) — the 4k default silently
+  truncated retrieved-context prompts, which looked exactly like a
+  retrieval failure; plus a 30m `OLLAMA_KEEP_ALIVE` default.
+
 ## [1.3.0] — 2026-07-04
 
 v1.3 "Intelligence": the LLM-driven memory intelligence layer (opt-in, local-first)
