@@ -33,6 +33,7 @@ deployment shape forever.
 | `templates/unraid/novacortex-qdrant.xml` | Qdrant — vector index. |
 | `templates/unraid/novacortex-api.xml` | The REST + MCP API. |
 | `templates/unraid/novacortex-web.xml` | The Web UI. |
+| `templates/unraid/novacortex-ollama.xml` | Optional Ollama sidecar, so embeddings can run on the server instead of at OpenAI. |
 | `docker-compose.unraid.yml` | The one-click alternative, linked from every template's `<Overview>`. |
 
 The three backing-service templates are NovaCortex-flavoured presets of upstream images, not a
@@ -108,8 +109,8 @@ then commit the resulting SHA into the template). Adopting it means adding
   `<Repository>` resolves.
 - **The web image is amd64-only** (Next.js builds are impractically slow under QEMU arm64).
   Unraid is x86_64-only, so this does not affect Unraid users. The api image is amd64 + arm64.
-- **The upstream pins are real too** — `surrealdb/surrealdb:v2.2`, `qdrant/qdrant:v1.14.0` and
-  `redis:7-alpine` all resolve anonymously on Docker Hub.
+- **The upstream pins are real too** — `surrealdb/surrealdb:v2.2`, `qdrant/qdrant:v1.14.0`,
+  `redis:7-alpine` and `ollama/ollama:latest` all resolve anonymously on Docker Hub.
 - **Versions must stay aligned.** All five templates pin exactly what the compose file uses.
   `scripts/sync-unraid-templates.sh --check` enforces this, and CI runs it — a NovaCortex release
   bump has to touch `docker-compose.yml`, `docker-compose.unraid.yml`, `scripts/gen-env.sh` and

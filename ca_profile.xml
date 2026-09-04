@@ -10,10 +10,12 @@ This repository ships the Unraid distribution of NovaCortex, installable two way
 end up with the same five containers:
 
 - **Community Apps templates:** `novacortex-redis`, `novacortex-surrealdb`,
-`novacortex-qdrant`, `novacortex-api` and `novacortex-web`. Install them in that order on a
-shared `novacortex` Docker network (`docker network create novacortex`). Appdata paths, host
-ports and passwords are all normal template fields, so nothing needs editing by hand. The
-three backing-service templates pin the same upstream images the Compose stack uses.
+`novacortex-qdrant`, `novacortex-api` and `novacortex-web`, plus an optional
+`novacortex-ollama` for embeddings that never leave the server. Install them in that order on
+a shared `novacortex` Docker network (`docker network create novacortex`). Appdata paths, host
+ports, passwords and the local-embedding settings are all normal template fields, so nothing
+needs editing by hand. The backing-service templates pin the same upstream images the Compose
+stack uses.
 - **Docker Compose Manager:** `docker-compose.unraid.yml` brings the whole stack up in one
 click. An optional `local-ai` profile adds an Ollama sidecar so embeddings and memory
 intelligence run fully offline — no memory text ever leaves the server.

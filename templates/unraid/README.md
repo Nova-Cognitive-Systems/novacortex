@@ -10,6 +10,7 @@ Everything Unraid needs, in one folder.
 | `novacortex-qdrant.xml` | Community Apps template — Qdrant (vector index). |
 | `novacortex-api.xml` | Community Apps template — the REST + MCP API. |
 | `novacortex-web.xml` | Community Apps template — the Web UI. |
+| `novacortex-ollama.xml` | Community Apps template — optional Ollama sidecar for fully local embeddings. |
 | `docker-compose.override.local-images.yml` | Development-only overlay that repoints api/web at locally built images. Used by `scripts/deploy-unraid.sh`. |
 
 ## Two ways to install
@@ -22,7 +23,7 @@ docs works either way.
 |---|---|---|
 | Setup | Install five templates in order | One compose file + one `.env` |
 | Paths, ports, secrets | Unraid UI fields | Edited in `.env` |
-| Optional offline Ollama sidecar | Not included — install Ollama separately and point the API's `OPENAI_BASE_URL` at it | `local-ai` profile, wired up for you |
+| Local embeddings (nothing leaves the server) | `novacortex-ollama` template + four fields on the API | `gen-env.sh --local-embeddings` + the `local-ai` profile |
 | Best for | People who want everything in the Docker tab | Fastest path to a running stack |
 
 ## Path A — five templates from Community Apps
@@ -43,6 +44,7 @@ running (Docker templates have no `depends_on`, so the order is on you):
 | 2 | `novacortex-surrealdb` | Data path, **Root Username / Root Password** |
 | 3 | `novacortex-qdrant` | Storage path |
 | 4 | `novacortex-api` | API port, `SURREALDB_PASS`, `REDIS_URL` (with the Redis password in it) |
+| — | `novacortex-ollama` | *Optional.* Model storage path. Install it before the API for [local embeddings](#local-embeddings-keeping-memory-text-on-your-server). |
 | 5 | `novacortex-web` | Web UI port, API URL |
 
 Each template already defaults its data path to the right place under
@@ -168,23 +170,74 @@ chown -R 999:999 /mnt/user/appdata/novacortex/redis
 docker restart novacortex-redis
 ```
 
-### Fully offline AI (`local-ai` profile)
+## Local embeddings: keeping memory text on your server
 
-The compose file ships an optional Ollama sidecar. With it, embeddings **and** the memory
-intelligence layer run on this server and no memory text ever leaves it:
+Semantic search needs an embedding model. Out of the box NovaCortex uses **no** embeddings at all
+and falls back to substring matching — `/health` and the Settings page always report which mode
+is active, so a silent degrade is visible. To switch it on you either send memory text to OpenAI,
+or run the model yourself. This section is the second option.
+
+Both install paths give you the same thing: an Ollama container on the `novacortex` network that
+the API talks to over an OpenAI-compatible endpoint. No memory text ever leaves the server.
+
+### Path A — the `novacortex-ollama` template
+
+1. Install `novacortex-ollama`. The only field that matters is where models are stored; several
+   GB per chat model, so pick a location you are happy with.
+2. Pull the embedding model — **nothing works until you do this**:
+
+   ```bash
+   docker exec novacortex-ollama ollama pull nomic-embed-text
+   ```
+
+3. Set four fields on the `novacortex-api` template:
+
+   | Field | Value |
+   |---|---|
+   | Embeddings: Base URL | `http://novacortex-ollama:11434/v1` |
+   | Embeddings: API Key | `ollama` — any non-empty value; Ollama ignores it |
+   | Embeddings: Model | `nomic-embed-text` |
+   | Embeddings: Vector Size | `768` |
+
+For the intelligence layer as well — LLM fact extraction and append-only conflict resolution —
+also `docker exec novacortex-ollama ollama pull qwen3:8b` and set **Intelligence: LLM Model** to
+`qwen3:8b`. That is a separate feature: setting it alone does not enable embeddings.
+
+### Path B — the `local-ai` compose profile
+
+`gen-env.sh` writes the same settings for you:
 
 ```bash
-./scripts/gen-env.sh --local-ai     # writes OPENAI_BASE_URL, EMBEDDING_MODEL,
-                                    # QDRANT_VECTOR_SIZE=768, LLM_MODEL, OLLAMA_PULL
-docker compose --profile local-ai up -d
+./scripts/gen-env.sh --unraid --local-embeddings   # semantic search only
+./scripts/gen-env.sh --unraid --local-ai           # search + intelligence layer
 ```
 
-Compose Manager runs plain `docker compose up`, so the way to enable the profile there is to add
-`COMPOSE_PROFILES=local-ai` to the project's `.env` — Compose reads its own settings from that
-file. Budget ~10 GB RAM/VRAM for `qwen3:8b` plus `nomic-embed-text`, or pick smaller models.
+Either flag writes `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `EMBEDDING_MODEL`,
+`QDRANT_VECTOR_SIZE=768` and `OLLAMA_PULL`; `--local-ai` adds `LLM_MODEL=qwen3:8b`. Then enable
+the profile. Compose Manager runs plain `docker compose up`, so add `COMPOSE_PROFILES=local-ai`
+to the project's `.env` — Compose reads its own settings from that file:
 
-`nomic-embed-text` produces 768-dimension vectors, so `QDRANT_VECTOR_SIZE=768` needs a **fresh**
-Qdrant collection. Switching embedding models on an existing install means re-embedding.
+```bash
+docker compose --profile local-ai up -d    # equivalent, from a terminal
+```
+
+The bundled `ollama-init` container pulls the models listed in `OLLAMA_PULL` on first start, so
+there is no manual `docker exec` step on this path.
+
+### Vector size is the one that bites
+
+`nomic-embed-text` produces **768**-dimension vectors; OpenAI's `text-embedding-3-small` produces
+**1536**. `QDRANT_VECTOR_SIZE` has to match whichever model you use. A mismatch fails API startup
+deliberately, rather than silently storing nothing.
+
+Changing it on an install that already has memories means a **fresh Qdrant collection** — the
+stored vectors have the old dimension and cannot be converted, so everything has to be
+re-embedded. Decide before you start filling the memory, or plan the re-index.
+
+Budget roughly 10 GB of RAM or VRAM for `qwen3:8b` plus `nomic-embed-text`, or pick smaller
+models. CPU-only is fine for embeddings alone. For an NVIDIA GPU, install the **Nvidia Driver**
+plugin from Community Apps, then on path A add `--runtime=nvidia` plus the `NVIDIA_VISIBLE_DEVICES`
+variable in the Ollama template's Extra Parameters, or on path B use `docker-compose.gpu.yml`.
 
 ## About the templates
 
@@ -195,8 +248,8 @@ password — is a `<Config>` field in the Unraid UI, so path A never asks you to
 (currently `ghcr.io/nova-cognitive-systems/novacortex-{api,web}:1.3.2`) and offer `latest` as an
 alternate tag in the branch selector. **They must run the same version as each other.** The three
 backing-service templates pin the same upstream images the compose file uses
-(`surrealdb/surrealdb:v2.2`, `qdrant/qdrant:v1.14.0`, `redis:7-alpine`);
-`scripts/sync-unraid-templates.sh --check` fails CI if any of those five pins drifts from the
+(`surrealdb/surrealdb:v2.2`, `qdrant/qdrant:v1.14.0`, `redis:7-alpine`, `ollama/ollama:latest`);
+`scripts/sync-unraid-templates.sh --check` fails CI if any of those six pins drifts from the
 compose file.
 
 They are also usable individually. If you already run Qdrant and Redis for something else, point
