@@ -27,43 +27,76 @@ supported install is Compose, not a single Docker template.
    ```
 
 4. Create the `.env` next to it. The stack refuses to start without `SURREALDB_PASS` and
-   `REDIS_PASSWORD`, so generate them rather than inventing them:
+   `REDIS_PASSWORD`, so generate them rather than inventing them. **Use `--unraid`** — it is
+   what sets `APPDATA` to the array instead of next to the compose file (see
+   [Data root](#data-root-the-one-setting-that-breaks-installs) below):
 
    ```bash
    # still in the project directory, on the Unraid terminal
    curl -fsSL -o gen-env.sh \
      https://raw.githubusercontent.com/Nova-Cognitive-Systems/novacortex/main/scripts/gen-env.sh
-   bash gen-env.sh .env        # or: bash gen-env.sh --local-ai .env
+   bash gen-env.sh --unraid .env        # add --local-ai for the fully offline variant
    rm gen-env.sh
    ```
 
-   Then set `APPDATA=/mnt/user/appdata/novacortex` in the generated `.env`.
-   `.env.unraid.example` in the repo root documents every value the compose file reads.
+   Run on the server itself, `--unraid` is also auto-detected. `.env.unraid.example` in the repo
+   root documents every value the compose file reads.
 
-5. **Compose Up**. First start pulls the pinned GHCR images and initialises the databases.
-6. Read the one-time bootstrap code and finish setup:
+5. **Check the ports are free** before starting — see [Ports](#ports):
+
+   ```bash
+   ss -ltnp | grep -E ':(3000|3001)'   # no output = both free
+   ```
+
+6. **Compose Up**. First start pulls the pinned GHCR images and initialises the databases.
+7. Read the one-time bootstrap code and finish setup:
 
    ```bash
    docker logs novacortex-api 2>&1 | grep -A1 "Bootstrap code"
    ```
 
-   Open `http://<server-ip>:3000`, paste the `nc_boot_…` code on the login page, and you have
-   an admin token.
+   Open `http://<server-ip>:3000` (or whatever `WEB_PORT` you set), paste the `nc_boot_…` code
+   on the login page, and you have an admin token.
 
 ### Ports
 
-| Port | Service | Notes |
-|---|---|---|
-| 3000 | Web UI | Change with `WEB_PORT` in `.env`. |
-| 3001 | REST API | Swagger at `/docs`. Change with `API_PORT`. |
+| Variable | Default | Service | Notes |
+|---|---|---|---|
+| `WEB_PORT` | 3000 | Web UI | **Frequently already taken.** 3000 is the default for Grafana, Homepage, Overseerr and plenty more; `WEB_PORT=3100` is a safe alternative. |
+| `API_PORT` | 3001 | REST API | Swagger at `/docs`. |
+
+Only the host side moves. The containers keep listening on 3000/3001 internally, the Web UI
+still reaches the API over the internal Docker network, and the Community Apps *WebUI* link
+follows whatever host port you set. If you set `CORS_ORIGINS`, update the port there to match.
 
 SurrealDB, Qdrant and Redis are reachable only on the internal `novacortex` Docker network —
 they are deliberately not published to the LAN.
 
+### Data root: the one setting that breaks installs
+
+`APPDATA` must be an **absolute path on the array or a pool**. The default,
+`/mnt/user/appdata/novacortex`, is correct; a relative path like `./data` is not.
+
+Compose Manager keeps its projects under `/boot/config/plugins/compose.manager/projects/`, and
+`/boot` is the **FAT32 USB boot flash**. FAT32 has no Unix ownership, and it is a USB stick. A
+relative `APPDATA` therefore puts Redis' append-only file and SurrealDB's RocksDB store there,
+where they cannot work: the Redis image chowns `/data` to its own `redis` user (uid 999) at
+startup before dropping privileges, that chown cannot succeed on FAT32, and the container
+restart-loops while its healthcheck reports unhealthy. Even if it did start, you would be
+writing a database's write-ahead log to the boot flash.
+
+`scripts/gen-env.sh --unraid` sets this correctly. If you hit the symptom on an existing
+install, fix `APPDATA` in `.env`, then recreate the stack:
+
+```bash
+docker compose down
+docker compose up -d
+```
+
 ### Appdata layout
 
-Everything under `${APPDATA}` (default `/mnt/user/appdata/novacortex`) is bind-mounted, so it
-survives `docker.img` rebuilds and is covered by the Unraid appdata backup plugin:
+Everything under `${APPDATA}` is bind-mounted, so it survives `docker.img` rebuilds and is
+covered by the Unraid appdata backup plugin:
 
 ```
 /mnt/user/appdata/novacortex/
@@ -74,6 +107,17 @@ survives `docker.img` rebuilds and is covered by the Unraid appdata backup plugi
 
 Ollama models are the one exception: they live in the named `ollama-models` Docker volume, since
 they are large and re-downloadable.
+
+On a normal appdata path you do **not** need to chown anything by hand. Each container sorts its
+own ownership out: SurrealDB runs as root (the compose file pins `user: "0:0"` because pre-v1.3
+data is root-owned), Qdrant runs as root, and Redis starts as root only to chown `/data` to
+uid 999 before dropping to that user. If you restored a backup and Redis still logs a permission
+error, this puts it right:
+
+```bash
+chown -R 999:999 /mnt/user/appdata/novacortex/redis
+docker restart novacortex-redis
+```
 
 ### Fully offline AI (`local-ai` profile)
 

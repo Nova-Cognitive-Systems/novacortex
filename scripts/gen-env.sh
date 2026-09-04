@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Generate a .env with strong random secrets for a NovaCortex self-host deployment.
-# Usage: ./scripts/gen-env.sh [--local-embeddings|--local-ai] [path]   (default path: .env)
+# Usage: ./scripts/gen-env.sh [--unraid] [--local-embeddings|--local-ai] [path]
+#                                                            (default path: .env)
+#   --unraid            APPDATA=/mnt/user/appdata/novacortex instead of ./data.
+#                       Auto-detected when this runs on the Unraid server itself;
+#                       pass it explicitly when generating the .env elsewhere.
 #   --local-embeddings  fully-local semantic search via the Ollama sidecar
 #                       (compose profile "local-ai")
 #   --local-ai          --local-embeddings PLUS the local intelligence layer
@@ -9,13 +13,30 @@ set -euo pipefail
 
 MODE="default"
 ENV_FILE=".env"
+# Unraid's Docker Compose Manager keeps projects on the FAT32 boot flash, which
+# has no Unix ownership — SurrealDB, Qdrant and Redis all fail there. So on
+# Unraid the data root has to be an absolute path on the array/pool.
+UNRAID=false
+[ -f /etc/unraid-version ] && UNRAID=true
 for arg in "$@"; do
   case "$arg" in
+    --unraid) UNRAID=true ;;
     --local-embeddings) MODE="embeddings" ;;
     --local-ai) MODE="ai" ;;
     *) ENV_FILE="$arg" ;;
   esac
 done
+
+if [ "$UNRAID" = true ]; then
+  APPDATA_VALUE="/mnt/user/appdata/novacortex"
+  APPDATA_NOTE="# Unraid appdata: survives docker.img rebuilds, covered by appdata backups.
+# Do NOT make this relative — Compose Manager projects live on the FAT32 boot
+# flash, which cannot hold Redis/SurrealDB/Qdrant data."
+else
+  APPDATA_VALUE="./data"
+  APPDATA_NOTE="# Generic Docker host: keep data next to the compose file.
+# On Unraid use /mnt/user/appdata/novacortex instead (or re-run with --unraid)."
+fi
 
 if [ -e "$ENV_FILE" ]; then
   echo "Refusing to overwrite existing $ENV_FILE. Remove it first if you really mean to." >&2
@@ -91,11 +112,15 @@ REDIS_PASSWORD=$(rand)
 NEXTAUTH_SECRET=$(rand)
 JWT_SECRET=$(rand)
 
-# --- Data + ports ---
-# Unraid: /mnt/user/appdata/novacortex   |   generic Docker host: ./data
-APPDATA=./data
-API_PORT=3001
+# --- Data root ---
+${APPDATA_NOTE}
+APPDATA=${APPDATA_VALUE}
+
+# --- Host ports ---
+# Check these are free BEFORE starting the stack. Port 3000 is a popular default
+# (Grafana, Homepage, Overseerr, …), so on a busy server set e.g. WEB_PORT=3100.
 WEB_PORT=3000
+API_PORT=3001
 
 # Pinned image version (the known-good release tag on GHCR)
 NOVACORTEX_VERSION=1.3.2
@@ -117,6 +142,8 @@ EOF
 
 chmod 600 "$ENV_FILE"
 echo "Wrote $ENV_FILE (chmod 600) with strong random secrets."
+echo "Data root: APPDATA=${APPDATA_VALUE}$([ "$UNRAID" = true ] && echo '  (Unraid)')"
+echo "Ports: WEB_PORT=3000, API_PORT=3001 — change them if either is already in use."
 case "$MODE" in
   embeddings)
     echo "Local embeddings preconfigured. Start the stack with:"

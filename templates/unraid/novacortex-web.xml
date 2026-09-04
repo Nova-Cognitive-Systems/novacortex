@@ -30,16 +30,23 @@
        /boot/config/plugins/compose.manager/projects/novacortex/
     3. Put docker-compose.unraid.yml from the repository in that folder as docker-compose.yml:
        curl -fsSL -o docker-compose.yml https://raw.githubusercontent.com/Nova-Cognitive-Systems/novacortex/main/docker-compose.unraid.yml
-    4. Create a .env next to it. scripts/gen-env.sh writes one with strong random secrets;
-       .env.unraid.example documents every value. Set APPDATA=/mnt/user/appdata/novacortex
-       and, for a fully offline install, run scripts/gen-env.sh --local-ai and start the
-       stack with the "local-ai" profile.
-    5. Compose Up. Then read the one-time bootstrap code with
+    4. Create a .env next to it with scripts/gen-env.sh --unraid, which writes strong random
+       secrets and APPDATA=/mnt/user/appdata/novacortex. Add --local-ai for a fully offline
+       install, then start the stack with the "local-ai" profile. .env.unraid.example
+       documents every value.
+       Keep APPDATA an absolute path on the array. Compose Manager stores its projects on the
+       FAT32 boot flash, which has no Unix ownership, so a relative data root leaves Redis
+       unable to take ownership of its own directory and restart-looping as unhealthy.
+    5. Check the ports in .env are free before starting. 3000 is a popular default on Unraid
+       (Grafana, Homepage, Overseerr, ...), so it is often already taken. If
+       "ss -ltnp | grep -E ':(3000|3001)'" shows something listening, set e.g. WEB_PORT=3100.
+    6. Compose Up. Then read the one-time bootstrap code with
        "docker logs novacortex-api 2>&amp;1 | grep -A1 'Bootstrap code'" and paste it on the
        login page to mint your admin token.
 
-    Ports: Web UI 3000, API 3001. Data lives under /mnt/user/appdata/novacortex, so it
-    survives docker.img rebuilds and is covered by Unraid appdata backups.
+    Default ports: Web UI 3000, API 3001, both changeable via WEB_PORT / API_PORT in the .env.
+    Data lives under /mnt/user/appdata/novacortex, so it survives docker.img rebuilds and is
+    covered by Unraid appdata backups.
   </Overview>
   <Description>
     NovaCortex gives AI agents a persistent, queryable memory that lives on your own hardware.
@@ -71,7 +78,7 @@
     Target="3000"
     Default="3000"
     Mode="tcp"
-    Description="Host port for the NovaCortex Web UI."
+    Description="Host port for the NovaCortex Web UI. 3000 is a popular default on Unraid (Grafana, Homepage, Overseerr, ...) — if it is already taken, change this to e.g. 3100. The WebUI link above follows whatever you set here; the container keeps listening on 3000 internally."
     Type="Port"
     Display="always"
     Required="true"
