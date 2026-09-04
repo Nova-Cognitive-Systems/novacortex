@@ -98,7 +98,7 @@ API_PORT=3001
 WEB_PORT=3000
 
 # Pinned image version (the known-good release tag on GHCR)
-NOVACORTEX_VERSION=1.3.0
+NOVACORTEX_VERSION=1.3.2
 
 # Namespace / database (defaults are fine for a single deployment)
 SURREALDB_NAMESPACE=novacortex
