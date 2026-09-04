@@ -1,0 +1,23 @@
+---
+description: All commits on this repository must be authored as Nova-DevBot
+alwaysApply: true
+---
+
+Every commit you create in this repository must be authored as the project bot:
+
+- `GIT_AUTHOR_NAME=Nova-DevBot` (exactly this name)
+- `GIT_AUTHOR_EMAIL=dev@novacognitive.com` **or**
+  `GIT_AUTHOR_EMAIL=298337751+Nova-DevBot@users.noreply.github.com`
+
+Never commit under a personal human identity on this repository. The committer may be
+GitHub when a pull request is merged; the author is what matters.
+
+Before committing, make sure the identity is set:
+
+```bash
+git config user.name  "Nova-DevBot"
+git config user.email "dev@novacognitive.com"
+```
+
+CI (`.github/workflows/commit-identity.yml`) rejects any introduced commit whose author
+name or email is outside that allowlist. See `AGENTS.md` for the full rule.
