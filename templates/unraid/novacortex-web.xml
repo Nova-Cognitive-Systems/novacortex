@@ -28,8 +28,8 @@
     1. Install the "Docker Compose Manager" plugin from Community Apps.
     2. Add a new project named "novacortex". Compose Manager creates
        /boot/config/plugins/compose.manager/projects/novacortex/
-    3. Put docker-compose.unraid.yml from the repository in that folder as docker-compose.yml
-       (repo root, or the identical copy in templates/unraid/).
+    3. Put docker-compose.unraid.yml from the repository in that folder as docker-compose.yml:
+       curl -fsSL -o docker-compose.yml https://raw.githubusercontent.com/Nova-Cognitive-Systems/novacortex/main/docker-compose.unraid.yml
     4. Create a .env next to it. scripts/gen-env.sh writes one with strong random secrets;
        .env.unraid.example documents every value. Set APPDATA=/mnt/user/appdata/novacortex
        and, for a fully offline install, run scripts/gen-env.sh --local-ai and start the
