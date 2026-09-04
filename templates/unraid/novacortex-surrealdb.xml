@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Container version="2">
+  <Name>novacortex-surrealdb</Name>
+  <Repository>surrealdb/surrealdb:v2.2</Repository>
+  <Registry>https://hub.docker.com/r/surrealdb/surrealdb</Registry>
+  <Network>novacortex</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/Nova-Cognitive-Systems/novacortex/issues</Support>
+  <Project>https://surrealdb.com</Project>
+  <Icon>https://raw.githubusercontent.com/Nova-Cognitive-Systems/novacortex/main/icon.svg</Icon>
+  <Overview>
+    SurrealDB preconfigured as the primary datastore for the NovaCortex stack — memories,
+    relations, the knowledge base and API tokens all live here. SurrealDB itself is by SurrealDB
+    Ltd; this template is maintained by Nova Cognitive Systems, and support below goes to the
+    NovaCortex issue tracker.
+
+    Part 2 of a 5-container stack. Install in this order, all on the same Docker network:
+
+    0. Create the shared network once, from an Unraid terminal:
+       docker network create novacortex
+       Container-name DNS only works on a user-defined network, which is how the API finds
+       this container by the name "novacortex-surrealdb".
+    1. novacortex-redis
+    2. novacortex-surrealdb  (this template)
+    3. novacortex-qdrant
+    4. novacortex-api
+    5. novacortex-web
+
+    Prefer one click to five? Install the whole stack with the Docker Compose Manager plugin
+    instead — see templates/unraid/README.md in the project repository. Both paths are
+    supported and produce the same container names.
+
+    Notes for this container:
+    - It publishes no ports. Only containers on the novacortex network reach it, which is what
+      you want for a database holding your agent's memory.
+    - It runs as root on purpose (Extra Parameters: --user 0:0). The image defaults to uid
+      65532, but Unraid appdata bind mounts are root-owned and data written by NovaCortex
+      before v1.3 is root-owned too, so RocksDB fails with "Permission denied" without this.
+    - Keep the password you set here; the novacortex-api template needs the same value.
+  </Overview>
+  <Description>
+    SurrealDB is a multi-model database (document, graph and relational in one engine) with a
+    single binary and no external dependencies. NovaCortex uses it as the system of record: typed
+    memories, the relation graph between them, knowledge-base documents, namespaces and API
+    tokens. Storage is RocksDB on a local path, so everything stays on your server.
+
+    This template pins v2.2, the version the NovaCortex stack is tested against, and stores its
+    data under /mnt/user/appdata/novacortex/surrealdb.
+  </Description>
+  <Category>AI:Tools Tools:Utilities</Category>
+  <TemplateURL>https://raw.githubusercontent.com/Nova-Cognitive-Systems/novacortex/main/templates/unraid/novacortex-surrealdb.xml</TemplateURL>
+  <Requires>
+    A user-defined Docker network named "novacortex" (docker network create novacortex). Only
+    useful together with the rest of the NovaCortex stack.
+  </Requires>
+  <ExtraSearchTerms>novacortex surrealdb database graph memory mcp self-hosted agents</ExtraSearchTerms>
+  <!-- Matches "user: 0:0" in docker-compose.unraid.yml — see the overview. -->
+  <ExtraParams>--user 0:0</ExtraParams>
+  <!-- The image's entrypoint is /surreal with no default command; everything else is env. -->
+  <PostArgs>start</PostArgs>
+
+  <Config
+    Name="Data Path"
+    Target="/data"
+    Default="/mnt/user/appdata/novacortex/surrealdb"
+    Mode="rw"
+    Description="Where SurrealDB keeps its RocksDB store. Must be an absolute path on the array or a pool — never the boot flash."
+    Type="Path"
+    Display="always"
+    Required="true"
+    Mask="false">/mnt/user/appdata/novacortex/surrealdb</Config>
+
+  <Config
+    Name="Root Username"
+    Target="SURREAL_USER"
+    Default="root"
+    Description="Root username, created on first start. The novacortex-api template must use the same value for SURREALDB_USER."
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="false">root</Config>
+
+  <Config
+    Name="Root Password"
+    Target="SURREAL_PASS"
+    Default=""
+    Description="Root password, set on first start. Generate one with: openssl rand -hex 24 — and use the identical value for SURREALDB_PASS in the novacortex-api template."
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="true"></Config>
+
+  <Config
+    Name="Storage Path (engine URI)"
+    Target="SURREAL_PATH"
+    Default="rocksdb:/data/database"
+    Description="Storage engine and location inside the container. Leave as-is unless you know why you are changing it — 'memory' would discard every memory on restart."
+    Type="Variable"
+    Display="advanced"
+    Required="true"
+    Mask="false">rocksdb:/data/database</Config>
+
+  <Config
+    Name="Log Level"
+    Target="SURREAL_LOG"
+    Default="info"
+    Description="One of: none, error, warn, info, debug, trace."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">info</Config>
+</Container>

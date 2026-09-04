@@ -22,6 +22,12 @@ cd "$(cd "$(dirname "$0")/.." && pwd)"
 SRC="docker-compose.unraid.yml"
 DST="templates/unraid/docker-compose.unraid.yml"
 TEMPLATES=(templates/unraid/novacortex-api.xml templates/unraid/novacortex-web.xml)
+# Community Apps templates for the backing services, and the compose service each one mirrors.
+declare -A BACKING=(
+  [templates/unraid/novacortex-surrealdb.xml]=surrealdb
+  [templates/unraid/novacortex-qdrant.xml]=qdrant
+  [templates/unraid/novacortex-redis.xml]=redis
+)
 
 fail=0
 note() { echo "  $*"; }
@@ -55,6 +61,23 @@ else
     fi
   done
 fi
+
+# ── The backing-service templates must pin the upstream images compose uses ──
+for t in "${!BACKING[@]}"; do
+  svc="${BACKING[$t]}"
+  # The image line of that service in the compose file, e.g. "surrealdb/surrealdb:v2.2".
+  image=$(awk -v s="  ${svc}:" '$0==s{f=1;next} f&&/^  [a-z]/{exit} f&&/^ *image:/{print $2;exit}' "$SRC")
+  if [ -z "$image" ]; then
+    echo "DRIFT could not read the image for service '${svc}' out of $SRC" >&2
+    fail=1
+  elif grep -q "<Repository>${image}</Repository>" "$t"; then
+    note "OK   $t pins $image"
+  else
+    echo "DRIFT $t does not pin ${image} (the tag $SRC uses for '${svc}')" >&2
+    note "     found: $(grep -o '<Repository>[^<]*</Repository>' "$t")"
+    fail=1
+  fi
+done
 
 # ── gen-env.sh writes NOVACORTEX_VERSION into every generated .env ──
 if [ -n "${VERSION:-}" ] && ! grep -q "^NOVACORTEX_VERSION=${VERSION}$" scripts/gen-env.sh; then

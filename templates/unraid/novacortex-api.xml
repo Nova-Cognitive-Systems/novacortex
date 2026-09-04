@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Container version="2">
-  <Name>NovaCortex-API</Name>
+  <Name>novacortex-api</Name>
   <Repository>ghcr.io/nova-cognitive-systems/novacortex-api:1.3.2</Repository>
   <Registry>https://github.com/Nova-Cognitive-Systems/novacortex/pkgs/container/novacortex-api</Registry>
   <Branch>
     <Tag>latest</Tag>
     <TagDescription>Rolling tag — always the newest published release</TagDescription>
   </Branch>
-  <Network>bridge</Network>
+  <Network>novacortex</Network>
   <MyIP/>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
@@ -17,14 +17,28 @@
   <Overview>
     REST + MCP API for NovaCortex — self-hosted, MCP-native long-term memory for AI agents.
 
-    This template installs the API container ONLY. The API is stateless and stores everything in
-    three backing services you must already run: SurrealDB (memories and graph), Qdrant (vector
-    index) and Redis (sessions and rate limiting). Use this template if you already run those
-    three as their own Unraid containers.
+    Part 4 of a 5-container stack. The API is stateless: memories and the relation graph live
+    in SurrealDB, vectors in Qdrant, sessions and rate-limit counters in Redis.
 
-    &gt;&gt; For a fresh install, install the whole stack with Docker Compose instead. &lt;&lt;
+    Two supported ways to install, both ending up with the same five container names:
 
-    Full stack (SurrealDB + Qdrant + Redis + API + Web, plus an optional offline Ollama sidecar):
+    -- Path A: the five NovaCortex templates from Community Apps, in this order --
+
+    0. Create the shared network once, from an Unraid terminal:
+       docker network create novacortex
+       Container-name DNS only works on a user-defined network, and that is how these
+       containers find each other.
+    1. novacortex-redis
+    2. novacortex-surrealdb
+    3. novacortex-qdrant
+    4. novacortex-api  (this template)
+    5. novacortex-web
+
+    The connection defaults below already point at the other containers by name. Set
+    SURREALDB_PASS to the password you gave novacortex-surrealdb, and put the
+    novacortex-redis password into REDIS_URL.
+
+    -- Path B: the whole stack in one click, with the Docker Compose Manager plugin --
 
     1. Install the "Docker Compose Manager" plugin from Community Apps.
     2. Add a new project named "novacortex". Compose Manager creates
@@ -45,9 +59,10 @@
        "docker logs novacortex-api 2>&amp;1 | grep -A1 'Bootstrap code'" and paste it on the
        login page to mint your admin token.
 
-    Default ports: API 3001 (Swagger at /docs), Web UI 3000, both changeable via API_PORT /
-    WEB_PORT in the .env. Data lives under /mnt/user/appdata/novacortex, so it survives
-    docker.img rebuilds and is covered by Unraid appdata backups.
+    Default ports: API 3001 (Swagger at /docs), Web UI 3000 — set here in the template on path
+    A, or via API_PORT / WEB_PORT in the .env on path B. Data lives under
+    /mnt/user/appdata/novacortex either way, so it survives docker.img rebuilds and is covered
+    by Unraid appdata backups.
 
     First start prints a one-time bootstrap code to the container log. Exchange it for an admin
     token on the Web UI login page, or POST it to /setup/bootstrap.
@@ -71,10 +86,11 @@
   <WebUI>http://[IP]:[PORT:3001]/docs</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/Nova-Cognitive-Systems/novacortex/main/templates/unraid/novacortex-api.xml</TemplateURL>
   <Requires>
-    Reachable SurrealDB (v2.2+), Qdrant (v1.14+) and Redis (7+) instances — this template does not
-    install them. Install the whole stack with the Docker Compose Manager plugin as described in
-    the overview if you do not already run them. API and Web UI must run the same NovaCortex
-    version.
+    A user-defined Docker network named "novacortex" (docker network create novacortex), plus
+    reachable SurrealDB (v2.2+), Qdrant (v1.14+) and Redis (7+) instances — this template does
+    not install them. The novacortex-surrealdb, novacortex-qdrant and novacortex-redis templates
+    in this repository set them up with matching defaults. API and Web UI must run the same
+    NovaCortex version.
   </Requires>
   <ExtraSearchTerms>mcp memory self-hosted agents qdrant surrealdb novacortex ai llm vector semantic knowledge-base</ExtraSearchTerms>
 

@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Container version="2">
+  <Name>novacortex-redis</Name>
+  <Repository>redis:7-alpine</Repository>
+  <Registry>https://hub.docker.com/_/redis</Registry>
+  <Network>novacortex</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/Nova-Cognitive-Systems/novacortex/issues</Support>
+  <Project>https://redis.io</Project>
+  <Icon>https://raw.githubusercontent.com/Nova-Cognitive-Systems/novacortex/main/icon.svg</Icon>
+  <Overview>
+    Redis preconfigured as the session and rate-limit cache for the NovaCortex stack. Redis
+    itself is by Redis Ltd; this template is maintained by Nova Cognitive Systems, and support
+    below goes to the NovaCortex issue tracker.
+
+    Part 1 of a 5-container stack. Install in this order, all on the same Docker network:
+
+    0. Create the shared network once, from an Unraid terminal:
+       docker network create novacortex
+       Container-name DNS only works on a user-defined network, which is how the API finds
+       this container by the name "novacortex-redis".
+    1. novacortex-redis  (this template)
+    2. novacortex-surrealdb
+    3. novacortex-qdrant
+    4. novacortex-api
+    5. novacortex-web
+
+    Prefer one click to five? Install the whole stack with the Docker Compose Manager plugin
+    instead — see templates/unraid/README.md in the project repository. Both paths are
+    supported and produce the same container names.
+
+    Notes for this container:
+    - Set a password below. It is required: the novacortex-api template needs it inside
+      REDIS_URL as redis://:YOUR-PASSWORD@novacortex-redis:6379, and Redis refuses remote
+      commands when no password is configured.
+    - It publishes no ports, so only containers on the novacortex network can reach it.
+    - You do not need to chown the appdata folder. The image starts as root purely to hand
+      /data to its own unprivileged redis user (uid 999) and then drops to it. That is also why
+      the data path has to be on the array: the Unraid boot flash is FAT32 and has no Unix
+      ownership, so this container restart-loops if you point it there.
+  </Overview>
+  <Description>
+    Redis is an in-memory data store. NovaCortex uses it for API sessions and rate-limit
+    counters, not for memory data — losing this volume costs you active sessions and nothing
+    else. It is configured here exactly as in the supported Compose stack: append-only
+    persistence on, capped at 256 MB with an allkeys-lru eviction policy, and password-protected.
+  </Description>
+  <Category>AI:Tools Tools:Utilities</Category>
+  <TemplateURL>https://raw.githubusercontent.com/Nova-Cognitive-Systems/novacortex/main/templates/unraid/novacortex-redis.xml</TemplateURL>
+  <Requires>
+    A user-defined Docker network named "novacortex" (docker network create novacortex). Only
+    useful together with the rest of the NovaCortex stack.
+  </Requires>
+  <ExtraSearchTerms>novacortex redis cache sessions rate-limit mcp self-hosted agents</ExtraSearchTerms>
+  <!--
+    redis-server takes its password as a command-line flag, and the image has no environment
+    variable for it. Re-entering the image's own entrypoint through "sh -c" lets the password
+    stay an ordinary masked template variable that Unraid can edit, while keeping the
+    entrypoint's behaviour intact: on the second pass it still chowns /data to uid 999 and
+    drops privileges with gosu, so Redis does not end up running as root.
+  -->
+  <PostArgs>sh -c 'exec /usr/local/bin/docker-entrypoint.sh redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass "$REDIS_PASSWORD"'</PostArgs>
+
+  <Config
+    Name="Data Path"
+    Target="/data"
+    Default="/mnt/user/appdata/novacortex/redis"
+    Mode="rw"
+    Description="Where Redis keeps its append-only file. Must be an absolute path on the array or a pool — the FAT32 boot flash cannot hold it."
+    Type="Path"
+    Display="always"
+    Required="true"
+    Mask="false">/mnt/user/appdata/novacortex/redis</Config>
+
+  <Config
+    Name="Redis Password"
+    Target="REDIS_PASSWORD"
+    Default=""
+    Description="Required. Generate one with: openssl rand -hex 24 — then use the identical value in the novacortex-api template's REDIS_URL, as redis://:YOUR-PASSWORD@novacortex-redis:6379"
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="true"></Config>
+</Container>
