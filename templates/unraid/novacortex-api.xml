@@ -34,6 +34,9 @@
     4. novacortex-api  (this template)
     5. novacortex-web
 
+    Optionally add novacortex-ollama before the API, to compute embeddings on this server
+    instead of sending memory text to OpenAI.
+
     The connection defaults below already point at the other containers by name. Set
     SURREALDB_PASS to the password you gave novacortex-surrealdb, and put the
     novacortex-redis password into REDIS_URL.
@@ -185,53 +188,55 @@
     Required="false"
     Mask="true"></Config>
 
+  <!-- ── Embeddings: what turns on semantic search. Grouped and always visible
+       because this is the setting people come here for. ─────────────────── -->
   <Config
-    Name="Embeddings API Key"
-    Target="OPENAI_API_KEY"
-    Default=""
-    Description="Enables semantic search. Leave empty for substring-only search. Set to any non-empty value (e.g. ollama) when using a local OpenAI-compatible server."
-    Type="Variable"
-    Display="always"
-    Required="false"
-    Mask="true"></Config>
-
-  <Config
-    Name="Embeddings Base URL"
+    Name="Embeddings: Base URL"
     Target="OPENAI_BASE_URL"
     Default=""
-    Description="OpenAI-compatible endpoint for embeddings. Empty = OpenAI. For a local Ollama container use http://ollama:11434/v1 (keeps all memory text on this server)."
+    Description="Where embeddings are computed. Leave EMPTY to use OpenAI. For fully local embeddings, where no memory text ever leaves this server, run the novacortex-ollama template and set http://novacortex-ollama:11434/v1 — or http://SERVER-IP:11434/v1 if your Ollama is not on the novacortex network. Any OpenAI-compatible server works (Ollama, LM Studio, vLLM, LiteLLM)."
     Type="Variable"
     Display="always"
     Required="false"
     Mask="false"></Config>
 
   <Config
-    Name="Embedding Model"
+    Name="Embeddings: API Key"
+    Target="OPENAI_API_KEY"
+    Default=""
+    Description="Leave EMPTY to run without embeddings — search then falls back to substring matching, and /health reports which mode is active. For OpenAI use your sk-... key. For a local Ollama any non-empty value works: type ollama."
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="true"></Config>
+
+  <Config
+    Name="Embeddings: Model"
     Target="EMBEDDING_MODEL"
     Default="text-embedding-3-small"
-    Description="Embedding model name. Must match QDRANT_VECTOR_SIZE — nomic-embed-text is 768, text-embedding-3-small is 1536. A mismatch fails startup loudly."
+    Description="nomic-embed-text for the local Ollama setup (pull it first: docker exec novacortex-ollama ollama pull nomic-embed-text). text-embedding-3-small for OpenAI. Whatever you pick, Vector Size below has to match it."
     Type="Variable"
-    Display="advanced"
+    Display="always"
     Required="false"
     Mask="false">text-embedding-3-small</Config>
 
   <Config
-    Name="Qdrant Vector Size"
+    Name="Embeddings: Vector Size"
     Target="QDRANT_VECTOR_SIZE"
     Default="1536"
-    Description="Vector dimension of the embedding model. Changing it needs a fresh Qdrant collection."
+    Description="MUST match the embedding model: 768 for nomic-embed-text, 1536 for text-embedding-3-small. WARNING — a mismatch fails API startup on purpose rather than silently storing nothing, and changing this on a running install needs a FRESH Qdrant collection: existing vectors have the old dimension and cannot be reused, so everything has to be re-embedded."
     Type="Variable"
-    Display="advanced"
+    Display="always"
     Required="false"
     Mask="false">1536</Config>
 
   <Config
-    Name="Intelligence LLM Model"
+    Name="Intelligence: LLM Model"
     Target="LLM_MODEL"
     Default=""
-    Description="Optional. Enables LLM fact extraction and append-only conflict resolution, e.g. qwen3:8b on a local Ollama or gpt-4o-mini on OpenAI. Empty = off."
+    Description="Optional and separate from embeddings — setting this alone does NOT enable semantic search. It turns on the intelligence layer: LLM fact extraction from conversations, plus append-only conflict resolution. e.g. qwen3:8b on the local Ollama (pull it first, needs ~5-6 GB RAM/VRAM) or gpt-4o-mini on OpenAI. Falls back to the Embeddings pair above for endpoint and key. Empty = off."
     Type="Variable"
-    Display="advanced"
+    Display="always"
     Required="false"
     Mask="false"></Config>
 

@@ -34,6 +34,9 @@
     4. novacortex-api
     5. novacortex-web  (this template)
 
+    Optionally add novacortex-ollama before the API, to compute embeddings on this server
+    instead of sending memory text to OpenAI.
+
     Point API URL below at your API container. Leave the default if it runs on this server as
     novacortex-api; use http://SERVER-IP:3001 if the API lives on another host.
 

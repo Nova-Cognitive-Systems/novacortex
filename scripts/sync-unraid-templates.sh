@@ -27,6 +27,7 @@ declare -A BACKING=(
   [templates/unraid/novacortex-surrealdb.xml]=surrealdb
   [templates/unraid/novacortex-qdrant.xml]=qdrant
   [templates/unraid/novacortex-redis.xml]=redis
+  [templates/unraid/novacortex-ollama.xml]=ollama
 )
 
 fail=0
@@ -65,8 +66,10 @@ fi
 # ── The backing-service templates must pin the upstream images compose uses ──
 for t in "${!BACKING[@]}"; do
   svc="${BACKING[$t]}"
-  # The image line of that service in the compose file, e.g. "surrealdb/surrealdb:v2.2".
-  image=$(awk -v s="  ${svc}:" '$0==s{f=1;next} f&&/^  [a-z]/{exit} f&&/^ *image:/{print $2;exit}' "$SRC")
+  # The image line of that service in the compose file, e.g. "surrealdb/surrealdb:v2.2",
+  # resolving a "${VAR:-default}" tag down to the default the template has to pin.
+  image=$(awk -v s="  ${svc}:" '$0==s{f=1;next} f&&/^  [a-z]/{exit} f&&/^ *image:/{print $2;exit}' "$SRC" \
+          | sed 's/\${[A-Za-z_][A-Za-z0-9_]*:-\([^}]*\)}/\1/g')
   if [ -z "$image" ]; then
     echo "DRIFT could not read the image for service '${svc}' out of $SRC" >&2
     fail=1

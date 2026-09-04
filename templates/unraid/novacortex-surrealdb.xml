@@ -28,6 +28,9 @@
     4. novacortex-api
     5. novacortex-web
 
+    Optionally add novacortex-ollama before the API, to compute embeddings on this server
+    instead of sending memory text to OpenAI.
+
     Prefer one click to five? Install the whole stack with the Docker Compose Manager plugin
     instead — see templates/unraid/README.md in the project repository. Both paths are
     supported and produce the same container names.
