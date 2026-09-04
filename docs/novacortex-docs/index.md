@@ -102,6 +102,8 @@ NovaCortex ships with a Model Context Protocol server (`packages/mcp-server`) th
 
 - [5-Minute Quickstart](./quickstart.md)
 - [Full Installation Guide](./installation.md)
+- [Install on Unraid](../../templates/unraid/README.md)
+- [Unraid Community Apps](../unraid-community-apps.md)
 - [Configuration Reference](./configuration.md)
 - [User Guide — Dashboard](./user-guide/dashboard.md)
 - [User Guide — Memories](./user-guide/memories.md)

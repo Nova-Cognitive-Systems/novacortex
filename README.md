@@ -151,7 +151,9 @@ Full developer/deploy docs live in [`docs/novacortex-docs`](./docs/novacortex-do
 
 - **`docker-compose.yml`** — supported self-host path for any Docker host. Pulls pinned
   GHCR images, secure-by-default, optional `local-ai` profile (Ollama sidecar for embeddings + intelligence).
-- **`docker-compose.unraid.yml`** — the same stack with Unraid appdata defaults.
+- **`docker-compose.unraid.yml`** — the same stack with Unraid appdata defaults. Install it with
+  the Docker Compose Manager plugin; [`templates/unraid/`](./templates/unraid/) has the
+  step-by-step guide plus Community Apps templates for the Web UI and API containers on their own.
 - **`docker-compose.gpu.yml`** — NVIDIA GPU override for the Ollama local-AI sidecar
   (`docker compose --profile local-ai -f docker-compose.yml -f docker-compose.gpu.yml up -d`).
 - **`docker-compose.dev.yml`** — local development (builds from source, hot-reload).
