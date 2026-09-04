@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Container version="2">
+  <Name>novacortex-ollama</Name>
+  <Repository>ollama/ollama:latest</Repository>
+  <Registry>https://hub.docker.com/r/ollama/ollama</Registry>
+  <Network>novacortex</Network>
+  <MyIP/>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/Nova-Cognitive-Systems/novacortex/issues</Support>
+  <Project>https://ollama.com</Project>
+  <Icon>https://raw.githubusercontent.com/Nova-Cognitive-Systems/novacortex/main/icon.svg</Icon>
+  <Overview>
+    Ollama as the local AI sidecar for the NovaCortex stack. Install this and NovaCortex computes
+    embeddings — and optionally its memory intelligence — on your own hardware, so no memory text
+    ever leaves the server. Ollama itself is by Ollama Inc; this template is maintained by Nova
+    Cognitive Systems, and support below goes to the NovaCortex issue tracker.
+
+    Optional 6th container. Install it before novacortex-api, on the same network:
+
+    0. docker network create novacortex     (once, if you have not already)
+    1. novacortex-redis
+    2. novacortex-surrealdb
+    3. novacortex-qdrant
+       novacortex-ollama  (this template — optional, but before the API)
+    4. novacortex-api
+    5. novacortex-web
+
+    AFTER STARTING THIS CONTAINER, PULL A MODEL. Nothing works until you do:
+
+       docker exec novacortex-ollama ollama pull nomic-embed-text
+
+    That is the embedding model, ~275 MB. For the optional intelligence layer as well, also pull
+    a chat model — qwen3:8b needs roughly 5-6 GB of RAM or VRAM:
+
+       docker exec novacortex-ollama ollama pull qwen3:8b
+
+    THEN SET FOUR FIELDS ON THE novacortex-api TEMPLATE:
+
+       Embeddings: Base URL     http://novacortex-ollama:11434/v1
+       Embeddings: API Key      ollama          (any non-empty value; Ollama ignores it)
+       Embeddings: Model        nomic-embed-text
+       Embeddings: Vector Size  768             (nomic-embed-text is 768-dimensional)
+
+    Vector Size has to match the model. Switching an existing install from OpenAI's 1536 to 768
+    needs a FRESH Qdrant collection — old vectors have the wrong dimension and everything has to
+    be re-embedded. For the intelligence layer, additionally set Intelligence: LLM Model to
+    qwen3:8b.
+
+    On the Compose path this whole container is the "local-ai" profile instead, and
+    scripts/gen-env.sh --unraid --local-embeddings (or --local-ai) writes the same settings into
+    your .env. See templates/unraid/README.md.
+
+    Notes:
+    - It publishes no ports, matching the Compose stack — only containers on the novacortex
+      network reach it. Pull models with docker exec as shown above; no port needed.
+    - CPU-only works and is fine for embeddings. For an NVIDIA GPU, install the "Nvidia Driver"
+      plugin from Community Apps, then add --runtime=nvidia and the NVIDIA_VISIBLE_DEVICES
+      variable for your card in Extra Parameters.
+    - Models are big. The default path below puts them in appdata; move it to a cache pool or
+      another share if that suits your server better.
+  </Overview>
+  <Description>
+    Ollama runs open-weight language and embedding models locally behind an OpenAI-compatible
+    API. NovaCortex talks to it exactly as it would to OpenAI, so pointing the API's embeddings
+    base URL at this container is all it takes to keep every byte of memory text on your own
+    hardware — the privacy-first path NovaCortex is built around.
+
+    Used for two separate things: embeddings for semantic search (nomic-embed-text), and
+    optionally the intelligence layer that extracts facts from conversations and resolves
+    conflicting memories append-only (a chat model such as qwen3:8b).
+  </Description>
+  <Category>AI:Tools Tools:Utilities</Category>
+  <TemplateURL>https://raw.githubusercontent.com/Nova-Cognitive-Systems/novacortex/main/templates/unraid/novacortex-ollama.xml</TemplateURL>
+  <Requires>
+    A user-defined Docker network named "novacortex" (docker network create novacortex). At least
+    one model pulled with docker exec after first start. Enough RAM for the models you pull —
+    embeddings alone are light, a chat model wants several GB. Only useful together with the rest
+    of the NovaCortex stack.
+  </Requires>
+  <ExtraSearchTerms>novacortex ollama local ai embeddings offline privacy llm nomic-embed-text mcp self-hosted agents</ExtraSearchTerms>
+
+  <Config
+    Name="Model Storage"
+    Target="/root/.ollama"
+    Default="/mnt/user/appdata/novacortex/ollama"
+    Mode="rw"
+    Description="Where pulled models are stored. Expect several GB per chat model. Must be an absolute path on the array or a pool — never the boot flash."
+    Type="Path"
+    Display="always"
+    Required="true"
+    Mask="false">/mnt/user/appdata/novacortex/ollama</Config>
+
+  <Config
+    Name="Context Length"
+    Target="OLLAMA_CONTEXT_LENGTH"
+    Default="16384"
+    Description="Ollama's own default is 4096 tokens, which is too small for NovaCortex's ingest and reader prompts — it truncates them silently, which looks like the model simply not finding anything. 16384 fits alongside qwen3:8b in about 10 GB of VRAM. Lower it only if you are short on memory."
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="false">16384</Config>
+
+  <Config
+    Name="Keep Model Loaded"
+    Target="OLLAMA_KEEP_ALIVE"
+    Default="30m"
+    Description="How long a model stays in memory after its last request. Longer means faster follow-up queries and more RAM held; 0 unloads immediately."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">30m</Config>
+</Container>

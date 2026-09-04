@@ -1,0 +1,25 @@
+# ============================================
+# NovaCortex — local-image override for Unraid
+# ============================================
+# Overlays docker-compose.unraid.yml so the api and web services run images that
+# were built on your workstation and side-loaded onto the server, instead of the
+# pinned GHCR releases. Everything else (SurrealDB, Qdrant, Redis, volumes, env)
+# comes from docker-compose.unraid.yml unchanged.
+#
+# scripts/deploy-unraid.sh installs this file as docker-compose.override.yml next
+# to docker-compose.yml in the Compose Manager project directory, where Docker
+# Compose picks it up automatically — including when Compose Manager runs it.
+#
+# Use this only to test unreleased builds. For normal installs use the release
+# images from GHCR, i.e. docker-compose.unraid.yml on its own.
+# ============================================
+
+services:
+  api:
+    image: novacortex-api:${IMAGE_TAG:-latest}
+    # The tag only exists in this host's local image store — never try to pull it.
+    pull_policy: never
+
+  web:
+    image: novacortex-web:${IMAGE_TAG:-latest}
+    pull_policy: never

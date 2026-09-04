@@ -35,6 +35,10 @@ jobs:
           done
       - name: Lint
         run: npm run lint
+      # The templates/unraid/ copy of the Unraid compose and the image tags pinned
+      # in the Community Apps XML must not drift from the root compose file.
+      - name: Unraid distribution artifacts in sync
+        run: ./scripts/sync-unraid-templates.sh --check
 
   test:
     name: Tests (live stack)

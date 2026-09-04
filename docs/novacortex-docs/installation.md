@@ -19,8 +19,12 @@ novacortex/
 ├── docker-compose.dokploy.yml       # Dokploy-compatible production compose
 ├── docker-compose.traefik.yml       # Experimental Traefik/TLS variant (unsupported)
 ├── .env.example                     # Annotated environment template
+├── .env.unraid.example              # Every variable the Unraid compose reads
+├── ca_profile.xml                   # Unraid Community Apps repository profile
+├── templates/unraid/                # Unraid install guide + Community Apps templates
 ├── scripts/
 │   ├── deploy.sh                    # Production deployment helper
+│   ├── deploy-unraid.sh             # Side-load a locally built stack onto Unraid
 │   ├── backup.sh                    # Backup and restore
 │   └── health-check.sh              # Health verification script
 ├── packages/

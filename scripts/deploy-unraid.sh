@@ -5,6 +5,11 @@
 # Builds Docker images locally, transfers them to Unraid,
 # and sets up the compose project.
 #
+# This is the "test an unreleased build" path. It installs the supported
+# docker-compose.unraid.yml plus templates/unraid/docker-compose.override.local-images.yml,
+# which repoints only the api/web services at the side-loaded local images.
+# For a normal install, skip this script: see templates/unraid/README.md.
+#
 # Usage: ./scripts/deploy-unraid.sh [--build-only] [--transfer-only]
 # ============================================
 
@@ -18,7 +23,7 @@ IMAGE_TAG="${IMAGE_TAG:-latest}"
 PLATFORM="${PLATFORM:-linux/amd64}"
 
 API_PORT="${API_PORT:-3001}"
-WEB_PORT="${WEB_PORT:-3080}"
+WEB_PORT="${WEB_PORT:-3000}"
 
 API_IMAGE="novacortex-api:${IMAGE_TAG}"
 WEB_IMAGE="novacortex-web:${IMAGE_TAG}"
@@ -76,14 +81,15 @@ build_images() {
 
   ok "API image built: $API_IMAGE"
 
+  # No NEXT_PUBLIC_* build args: the released GHCR image is built without them too,
+  # and the browser reaches the API through the Web UI's same-origin /api/v1 proxy
+  # (API_INTERNAL_URL) at runtime. Keeping them unset keeps this build faithful.
   info "Building Web image..."
   docker build \
     --platform "$PLATFORM" \
     -f packages/web/Dockerfile \
     -t "$WEB_IMAGE" \
     --target production \
-    --build-arg "NEXT_PUBLIC_API_URL=http://${UNRAID_IP}:${API_PORT}" \
-    --build-arg "NEXT_PUBLIC_WS_URL=ws://${UNRAID_IP}:${API_PORT}" \
     .
 
   ok "Web image built: $WEB_IMAGE"
@@ -117,9 +123,11 @@ transfer_to_unraid() {
   ssh "${UNRAID_USER}@${UNRAID_IP}" "docker load -i /tmp/${ARCHIVE_NAME} && rm /tmp/${ARCHIVE_NAME}"
   ok "Images loaded on Unraid"
 
-  info "Transferring docker-compose.yml..."
-  scp "templates/unraid/docker-compose.unraid.yml" \
+  info "Transferring compose files..."
+  scp "docker-compose.unraid.yml" \
     "${UNRAID_USER}@${UNRAID_IP}:${UNRAID_PROJECT_DIR}/docker-compose.yml"
+  scp "templates/unraid/docker-compose.override.local-images.yml" \
+    "${UNRAID_USER}@${UNRAID_IP}:${UNRAID_PROJECT_DIR}/docker-compose.override.yml"
 
   # Transfer .env if it doesn't already exist on Unraid
   if ! ssh "${UNRAID_USER}@${UNRAID_IP}" "test -f ${UNRAID_PROJECT_DIR}/.env"; then
@@ -131,24 +139,25 @@ transfer_to_unraid() {
 # ============================================
 
 # Database credentials
-SURREALDB_USER=novacortex
-SURREALDB_PASS=$(openssl rand -hex 16)
+SURREALDB_USER=root
+SURREALDB_PASS=$(openssl rand -hex 24)
+REDIS_PASSWORD=$(openssl rand -hex 24)
 
-# Security secrets
-JWT_SECRET=$(openssl rand -hex 32)
-NEXTAUTH_SECRET=$(openssl rand -hex 32)
-REDIS_PASSWORD=$(openssl rand -hex 16)
+# Appdata root — bind-mounted, survives docker.img rebuilds
+APPDATA=/mnt/user/appdata/novacortex
 
-# Network & Ports
-UNRAID_IP=${UNRAID_IP}
+# Ports
 API_PORT=${API_PORT}
 WEB_PORT=${WEB_PORT}
 
-# Optional: AI provider keys (uncomment and fill in)
-# OPENAI_API_KEY=
-# ANTHROPIC_API_KEY=
+# Tag of the side-loaded local images (see docker-compose.override.yml)
+IMAGE_TAG=${IMAGE_TAG}
 
-# Optional: License
+# Optional: semantic search. Empty = substring-only search.
+# OPENAI_API_KEY=
+# OPENAI_BASE_URL=
+
+# Optional: License. Empty = free tier.
 # LICENSE_KEY=
 
 # Logging

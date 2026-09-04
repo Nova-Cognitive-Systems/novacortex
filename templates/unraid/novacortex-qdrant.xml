@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Container version="2">
+  <Name>novacortex-qdrant</Name>
+  <Repository>qdrant/qdrant:v1.14.0</Repository>
+  <Registry>https://hub.docker.com/r/qdrant/qdrant</Registry>
+  <Network>novacortex</Network>
+  <MyIP/>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/Nova-Cognitive-Systems/novacortex/issues</Support>
+  <Project>https://qdrant.tech</Project>
+  <Icon>https://raw.githubusercontent.com/Nova-Cognitive-Systems/novacortex/main/icon.svg</Icon>
+  <Overview>
+    Qdrant preconfigured as the vector index for the NovaCortex stack — this is what makes
+    semantic search over your agent's memory work. Qdrant itself is by Qdrant Solutions GmbH;
+    this template is maintained by Nova Cognitive Systems, and support below goes to the
+    NovaCortex issue tracker.
+
+    Part 3 of a 5-container stack. Install in this order, all on the same Docker network:
+
+    0. Create the shared network once, from an Unraid terminal:
+       docker network create novacortex
+       Container-name DNS only works on a user-defined network, which is how the API finds
+       this container by the name "novacortex-qdrant".
+    1. novacortex-redis
+    2. novacortex-surrealdb
+    3. novacortex-qdrant  (this template)
+    4. novacortex-api
+    5. novacortex-web
+
+    Optionally add novacortex-ollama before the API, to compute embeddings on this server
+    instead of sending memory text to OpenAI.
+
+    Prefer one click to five? Install the whole stack with the Docker Compose Manager plugin
+    instead — see templates/unraid/README.md in the project repository. Both paths are
+    supported and produce the same container names.
+
+    Notes for this container:
+    - It publishes no ports, matching the supported Compose stack. If you want the Qdrant
+      dashboard on your LAN, add a port mapping for container port 6333 yourself and set an
+      API key below first.
+    - Vector dimension is decided by the API, not here. It has to match your embedding model
+      (1536 for text-embedding-3-small, 768 for nomic-embed-text), and changing it later needs
+      a fresh collection.
+  </Overview>
+  <Description>
+    Qdrant is an open-source vector database and similarity-search engine written in Rust.
+    NovaCortex embeds memory text and stores the resulting vectors here, then queries Qdrant to
+    answer natural-language searches; without it, search falls back to plain substring matching.
+
+    This template pins v1.14.0, the version the NovaCortex stack is tested against, and stores
+    its index under /mnt/user/appdata/novacortex/qdrant.
+  </Description>
+  <Category>AI:Tools Tools:Utilities</Category>
+  <TemplateURL>https://raw.githubusercontent.com/Nova-Cognitive-Systems/novacortex/main/templates/unraid/novacortex-qdrant.xml</TemplateURL>
+  <Requires>
+    A user-defined Docker network named "novacortex" (docker network create novacortex). Only
+    useful together with the rest of the NovaCortex stack.
+  </Requires>
+  <ExtraSearchTerms>novacortex qdrant vector database embeddings semantic search mcp self-hosted agents</ExtraSearchTerms>
+
+  <Config
+    Name="Storage Path"
+    Target="/qdrant/storage"
+    Default="/mnt/user/appdata/novacortex/qdrant"
+    Mode="rw"
+    Description="Where Qdrant keeps its vector index. Must be an absolute path on the array or a pool — never the boot flash."
+    Type="Path"
+    Display="always"
+    Required="true"
+    Mask="false">/mnt/user/appdata/novacortex/qdrant</Config>
+
+  <Config
+    Name="API Key"
+    Target="QDRANT__SERVICE__API_KEY"
+    Default=""
+    Description="Optional. Leave empty on a LAN-only stack where Qdrant publishes no ports. If you set it, put the same value in QDRANT_API_KEY on the novacortex-api template."
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="true"></Config>
+
+  <Config
+    Name="Storage Path (in container)"
+    Target="QDRANT__STORAGE__STORAGE_PATH"
+    Default="/qdrant/storage"
+    Description="Must match the container side of the storage path above."
+    Type="Variable"
+    Display="advanced"
+    Required="true"
+    Mask="false">/qdrant/storage</Config>
+
+  <Config
+    Name="Enable TLS"
+    Target="QDRANT__SERVICE__ENABLE_TLS"
+    Default="false"
+    Description="Leave false. Traffic never leaves the internal Docker network, and the API connects over plain HTTP."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">false</Config>
+</Container>

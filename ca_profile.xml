@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CommunityApplications>
+  <Profile>
+NovaCortex is self-hosted, MCP-native long-term memory for AI agents — typed memories
+(episodic, semantic, procedural, working), semantic vector search, a relation graph and a
+knowledge base, all running on your own hardware. Agents talk to it over MCP (Claude,
+Cursor, Claude Code), REST, the CLI or the TypeScript/Python SDKs.
+
+This repository ships the Unraid distribution of NovaCortex, installable two ways — both
+end up with the same five containers:
+
+- **Community Apps templates:** `novacortex-redis`, `novacortex-surrealdb`,
+`novacortex-qdrant`, `novacortex-api` and `novacortex-web`, plus an optional
+`novacortex-ollama` for embeddings that never leave the server. Install them in that order on
+a shared `novacortex` Docker network (`docker network create novacortex`). Appdata paths, host
+ports, passwords and the local-embedding settings are all normal template fields, so nothing
+needs editing by hand. The backing-service templates pin the same upstream images the Compose
+stack uses.
+- **Docker Compose Manager:** `docker-compose.unraid.yml` brings the whole stack up in one
+click. An optional `local-ai` profile adds an Ollama sidecar so embeddings and memory
+intelligence run fully offline — no memory text ever leaves the server.
+
+Everything is Apache-2.0 and the free tier needs no license key or account. Images are
+published to GHCR at `ghcr.io/nova-cognitive-systems/novacortex-{api,web}`.
+
+Support: https://github.com/Nova-Cognitive-Systems/novacortex/issues
+  </Profile>
+  <Icon>https://raw.githubusercontent.com/Nova-Cognitive-Systems/novacortex/main/icon.svg</Icon>
+  <WebPage>https://novacortex.dev</WebPage>
+  <!-- No Unraid forum thread exists yet; GitHub Issues is the support landing page. -->
+  <Forum>https://github.com/Nova-Cognitive-Systems/novacortex/issues</Forum>
+</CommunityApplications>

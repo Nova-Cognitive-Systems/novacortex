@@ -1,0 +1,272 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Container version="2">
+  <Name>novacortex-api</Name>
+  <Repository>ghcr.io/nova-cognitive-systems/novacortex-api:1.3.2</Repository>
+  <Registry>https://github.com/Nova-Cognitive-Systems/novacortex/pkgs/container/novacortex-api</Registry>
+  <Branch>
+    <Tag>latest</Tag>
+    <TagDescription>Rolling tag — always the newest published release</TagDescription>
+  </Branch>
+  <Network>novacortex</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/Nova-Cognitive-Systems/novacortex/issues</Support>
+  <Project>https://github.com/Nova-Cognitive-Systems/novacortex</Project>
+  <Icon>https://raw.githubusercontent.com/Nova-Cognitive-Systems/novacortex/main/icon.svg</Icon>
+  <Overview>
+    REST + MCP API for NovaCortex — self-hosted, MCP-native long-term memory for AI agents.
+
+    Part 4 of a 5-container stack. The API is stateless: memories and the relation graph live
+    in SurrealDB, vectors in Qdrant, sessions and rate-limit counters in Redis.
+
+    Two supported ways to install, both ending up with the same five container names:
+
+    -- Path A: the five NovaCortex templates from Community Apps, in this order --
+
+    0. Create the shared network once, from an Unraid terminal:
+       docker network create novacortex
+       Container-name DNS only works on a user-defined network, and that is how these
+       containers find each other.
+    1. novacortex-redis
+    2. novacortex-surrealdb
+    3. novacortex-qdrant
+    4. novacortex-api  (this template)
+    5. novacortex-web
+
+    Optionally add novacortex-ollama before the API, to compute embeddings on this server
+    instead of sending memory text to OpenAI.
+
+    The connection defaults below already point at the other containers by name. Set
+    SURREALDB_PASS to the password you gave novacortex-surrealdb, and put the
+    novacortex-redis password into REDIS_URL.
+
+    -- Path B: the whole stack in one click, with the Docker Compose Manager plugin --
+
+    1. Install the "Docker Compose Manager" plugin from Community Apps.
+    2. Add a new project named "novacortex". Compose Manager creates
+       /boot/config/plugins/compose.manager/projects/novacortex/
+    3. Put docker-compose.unraid.yml from the repository in that folder as docker-compose.yml:
+       curl -fsSL -o docker-compose.yml https://raw.githubusercontent.com/Nova-Cognitive-Systems/novacortex/main/docker-compose.unraid.yml
+    4. Create a .env next to it with scripts/gen-env.sh --unraid, which writes strong random
+       secrets and APPDATA=/mnt/user/appdata/novacortex. Add --local-ai for a fully offline
+       install, then start the stack with the "local-ai" profile. .env.unraid.example
+       documents every value.
+       Keep APPDATA an absolute path on the array. Compose Manager stores its projects on the
+       FAT32 boot flash, which has no Unix ownership, so a relative data root leaves Redis
+       unable to take ownership of its own directory and restart-looping as unhealthy.
+    5. Check the ports in .env are free before starting. 3000 is a popular default on Unraid
+       (Grafana, Homepage, Overseerr, ...), so it is often already taken. If
+       "ss -ltnp | grep -E ':(3000|3001)'" shows something listening, set e.g. WEB_PORT=3100.
+    6. Compose Up. Then read the one-time bootstrap code with
+       "docker logs novacortex-api 2>&amp;1 | grep -A1 'Bootstrap code'" and paste it on the
+       login page to mint your admin token.
+
+    Default ports: API 3001 (Swagger at /docs), Web UI 3000 — set here in the template on path
+    A, or via API_PORT / WEB_PORT in the .env on path B. Data lives under
+    /mnt/user/appdata/novacortex either way, so it survives docker.img rebuilds and is covered
+    by Unraid appdata backups.
+
+    First start prints a one-time bootstrap code to the container log. Exchange it for an admin
+    token on the Web UI login page, or POST it to /setup/bootstrap.
+  </Overview>
+  <Description>
+    NovaCortex gives AI agents a persistent, queryable memory that lives on your own hardware.
+    Typed memories (episodic, semantic, procedural, working) with salience and decay, semantic
+    vector search over Qdrant, a typed relation graph, a document knowledge base, and per-agent
+    namespaces. Agents connect over MCP (Claude, Cursor, Claude Code), the REST API, the CLI or
+    the TypeScript/Python SDKs. Memory can be exported and re-imported as portable JSON,
+    MessagePack or AES-256-GCM-encrypted archives, so there is no lock-in.
+
+    Embeddings are optional and off by default: without them search falls back to substring
+    matching, and /health reports the active mode so a silent degrade is visible. Point
+    OPENAI_BASE_URL at an Ollama sidecar to keep every byte of memory text on this server, or set
+    OPENAI_API_KEY to use OpenAI. Setting LLM_MODEL additionally turns on the intelligence layer
+    (LLM fact extraction and append-only conflict resolution). Apache-2.0; the free tier needs no
+    key and no account.
+  </Description>
+  <Category>AI:Tools Tools:Utilities</Category>
+  <WebUI>http://[IP]:[PORT:3001]/docs</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/Nova-Cognitive-Systems/novacortex/main/templates/unraid/novacortex-api.xml</TemplateURL>
+  <Requires>
+    A user-defined Docker network named "novacortex" (docker network create novacortex), plus
+    reachable SurrealDB (v2.2+), Qdrant (v1.14+) and Redis (7+) instances — this template does
+    not install them. The novacortex-surrealdb, novacortex-qdrant and novacortex-redis templates
+    in this repository set them up with matching defaults. API and Web UI must run the same
+    NovaCortex version.
+  </Requires>
+  <ExtraSearchTerms>mcp memory self-hosted agents qdrant surrealdb novacortex ai llm vector semantic knowledge-base</ExtraSearchTerms>
+
+  <Config
+    Name="API Port"
+    Target="3001"
+    Default="3001"
+    Mode="tcp"
+    Description="Host port for the NovaCortex REST API. Swagger UI is served at /docs. Change it if 3001 is already taken — the WebUI link above follows whatever you set here, and the container keeps listening on 3001 internally."
+    Type="Port"
+    Display="always"
+    Required="true"
+    Mask="false">3001</Config>
+
+  <Config
+    Name="SurrealDB URL"
+    Target="SURREALDB_URL"
+    Default="ws://novacortex-surrealdb:8000/rpc"
+    Description="WebSocket RPC endpoint of your SurrealDB instance."
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="false">ws://novacortex-surrealdb:8000/rpc</Config>
+
+  <Config
+    Name="SurrealDB User"
+    Target="SURREALDB_USER"
+    Default="root"
+    Description="SurrealDB root username."
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="false">root</Config>
+
+  <Config
+    Name="SurrealDB Password"
+    Target="SURREALDB_PASS"
+    Default=""
+    Description="SurrealDB root password. Generate one with: openssl rand -hex 24"
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="true"></Config>
+
+  <Config
+    Name="Qdrant URL"
+    Target="QDRANT_URL"
+    Default="http://novacortex-qdrant:6333"
+    Description="HTTP endpoint of your Qdrant instance."
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="false">http://novacortex-qdrant:6333</Config>
+
+  <Config
+    Name="Redis URL"
+    Target="REDIS_URL"
+    Default="redis://:PASSWORD@novacortex-redis:6379"
+    Description="Redis connection URL including the password, e.g. redis://:yourpassword@novacortex-redis:6379"
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="true">redis://:PASSWORD@novacortex-redis:6379</Config>
+
+  <Config
+    Name="SurrealDB Namespace"
+    Target="SURREALDB_NAMESPACE"
+    Default="novacortex"
+    Description="SurrealDB namespace to use."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">novacortex</Config>
+
+  <Config
+    Name="SurrealDB Database"
+    Target="SURREALDB_DATABASE"
+    Default="production"
+    Description="SurrealDB database to use."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">production</Config>
+
+  <Config
+    Name="Qdrant API Key"
+    Target="QDRANT_API_KEY"
+    Default=""
+    Description="Only needed if your Qdrant instance requires authentication."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="true"></Config>
+
+  <!-- ── Embeddings: what turns on semantic search. Grouped and always visible
+       because this is the setting people come here for. ─────────────────── -->
+  <Config
+    Name="Embeddings: Base URL"
+    Target="OPENAI_BASE_URL"
+    Default=""
+    Description="Where embeddings are computed. Leave EMPTY to use OpenAI. For fully local embeddings, where no memory text ever leaves this server, run the novacortex-ollama template and set http://novacortex-ollama:11434/v1 — or http://SERVER-IP:11434/v1 if your Ollama is not on the novacortex network. Any OpenAI-compatible server works (Ollama, LM Studio, vLLM, LiteLLM)."
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="false"></Config>
+
+  <Config
+    Name="Embeddings: API Key"
+    Target="OPENAI_API_KEY"
+    Default=""
+    Description="Leave EMPTY to run without embeddings — search then falls back to substring matching, and /health reports which mode is active. For OpenAI use your sk-... key. For a local Ollama any non-empty value works: type ollama."
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="true"></Config>
+
+  <Config
+    Name="Embeddings: Model"
+    Target="EMBEDDING_MODEL"
+    Default="text-embedding-3-small"
+    Description="nomic-embed-text for the local Ollama setup (pull it first: docker exec novacortex-ollama ollama pull nomic-embed-text). text-embedding-3-small for OpenAI. Whatever you pick, Vector Size below has to match it."
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="false">text-embedding-3-small</Config>
+
+  <Config
+    Name="Embeddings: Vector Size"
+    Target="QDRANT_VECTOR_SIZE"
+    Default="1536"
+    Description="MUST match the embedding model: 768 for nomic-embed-text, 1536 for text-embedding-3-small. WARNING — a mismatch fails API startup on purpose rather than silently storing nothing, and changing this on a running install needs a FRESH Qdrant collection: existing vectors have the old dimension and cannot be reused, so everything has to be re-embedded."
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="false">1536</Config>
+
+  <Config
+    Name="Intelligence: LLM Model"
+    Target="LLM_MODEL"
+    Default=""
+    Description="Optional and separate from embeddings — setting this alone does NOT enable semantic search. It turns on the intelligence layer: LLM fact extraction from conversations, plus append-only conflict resolution. e.g. qwen3:8b on the local Ollama (pull it first, needs ~5-6 GB RAM/VRAM) or gpt-4o-mini on OpenAI. Falls back to the Embeddings pair above for endpoint and key. Empty = off."
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="false"></Config>
+
+  <Config
+    Name="CORS Origins"
+    Target="CORS_ORIGINS"
+    Default=""
+    Description="Comma-separated list of allowed browser origins, e.g. http://SERVER-IP:3000. Empty = permissive."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false"></Config>
+
+  <Config
+    Name="Log Level"
+    Target="LOG_LEVEL"
+    Default="info"
+    Description="One of: debug, info, warn, error."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">info</Config>
+
+  <Config
+    Name="License Key"
+    Target="LICENSE_KEY"
+    Default=""
+    Description="Optional Pro/Enterprise key. Empty = free tier (3 namespaces), which needs no key and no account."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="true"></Config>
+</Container>
