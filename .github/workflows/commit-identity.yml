@@ -1,0 +1,98 @@
+name: Commit identity
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: commit-identity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  author-allowlist:
+    name: Author allowlist (Nova-DevBot)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check the author of every introduced commit
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+
+          EXPECTED_NAME='Nova-DevBot'
+          ALLOWED_EMAILS='dev@novacognitive.com 298337751+Nova-DevBot@users.noreply.github.com'
+
+          # Commits already reachable from the base are out of scope. An unusable base
+          # (all-zero SHA on a new branch, force-push, shallow history) degrades to
+          # checking only the tip commit rather than silently passing.
+          if [ -n "${BASE_SHA:-}" ] && merge_base=$(git merge-base "$BASE_SHA" "$HEAD_SHA" 2>/dev/null); then
+            range=("${merge_base}..${HEAD_SHA}")
+          elif git cat-file -e "${HEAD_SHA}~1^{commit}" 2>/dev/null; then
+            range=("${HEAD_SHA}~1..${HEAD_SHA}")
+          else
+            range=(--max-count=1 "${HEAD_SHA}")
+          fi
+
+          # Merge commits are excluded: GitHub stamps them with the identity of whoever
+          # pressed Merge, and they carry no authored content of their own.
+          if ! revs=$(git rev-list --no-merges "${range[@]}"); then
+            echo "::error::Could not enumerate the commits to check (${range[*]})."
+            exit 1
+          fi
+          mapfile -t commits < <(printf '%s' "$revs")
+
+          if [ "${#commits[@]}" -eq 0 ]; then
+            echo "No non-merge commits introduced (${range[*]}) — nothing to check."
+            exit 0
+          fi
+
+          failed=0
+          for sha in "${commits[@]}"; do
+            name=$(git show -s --format='%an' "$sha")
+            email=$(git show -s --format='%ae' "$sha")
+            short=$(git rev-parse --short "$sha")
+
+            ok=0
+            for allowed in $ALLOWED_EMAILS; do
+              [ "$email" = "$allowed" ] && ok=1
+            done
+            [ "$name" = "$EXPECTED_NAME" ] || ok=0
+
+            if [ "$ok" -eq 1 ]; then
+              echo "ok   $short  $name <$email>"
+            else
+              echo "::error::Commit $short is authored by \"$name <$email>\", which is not the Nova-DevBot identity."
+              failed=1
+            fi
+          done
+
+          if [ "$failed" -ne 0 ]; then
+            cat >&2 <<'MSG'
+
+          Every commit on this repository must be authored as Nova-DevBot.
+
+            author name : Nova-DevBot
+            author email: dev@novacognitive.com
+                      or: 298337751+Nova-DevBot@users.noreply.github.com
+
+          Fix the git identity and re-author the offending commits:
+
+            git config user.name  "Nova-DevBot"
+            git config user.email "dev@novacognitive.com"
+            git rebase --exec 'git commit --amend --no-edit --reset-author' <base>
+            git push --force-with-lease
+
+          See AGENTS.md / CONTRIBUTING.md for the full rule.
+          MSG
+            exit 1
+          fi
+
+          echo "All ${#commits[@]} introduced commit(s) are authored by Nova-DevBot."
