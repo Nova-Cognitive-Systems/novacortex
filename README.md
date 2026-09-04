@@ -147,6 +147,13 @@ npm test                # full suite (needs the dev stack up)
 
 Full developer/deploy docs live in [`docs/novacortex-docs`](./docs/novacortex-docs).
 
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md). Note that **every commit here must be authored
+as `Nova-DevBot`** (`dev@novacognitive.com` or
+`298337751+Nova-DevBot@users.noreply.github.com`) — CI rejects any other author. The full
+rule lives in [AGENTS.md](./AGENTS.md).
+
 ## Deployment variants
 
 - **`docker-compose.yml`** — supported self-host path for any Docker host. Pulls pinned
