@@ -22,7 +22,7 @@ docs works either way.
 |---|---|---|
 | Setup | Install five templates in order | One compose file + one `.env` |
 | Paths, ports, secrets | Unraid UI fields | Edited in `.env` |
-| Optional offline Ollama sidecar | Not included | `local-ai` profile |
+| Optional offline Ollama sidecar | Not included — install Ollama separately and point the API's `OPENAI_BASE_URL` at it | `local-ai` profile, wired up for you |
 | Best for | People who want everything in the Docker tab | Fastest path to a running stack |
 
 ## Path A — five templates from Community Apps
@@ -34,7 +34,8 @@ container-name DNS only works on a user-defined network:
 docker network create novacortex
 ```
 
-Then install these five templates, **in this order** (each one waits for the ones before it):
+Then install these five templates, **in this order**, so each one finds its dependencies already
+running (Docker templates have no `depends_on`, so the order is on you):
 
 | # | Template | Set in the UI |
 |---|---|---|
