@@ -13,27 +13,72 @@ For the user-facing install instructions see [`templates/unraid/README.md`](../t
 
 ## What we ship, and why
 
-NovaCortex is five services (SurrealDB, Qdrant, Redis, API, Web UI) plus an optional Ollama
-sidecar. A CA *Docker template* installs exactly one container, so there is no honest way to
-express the whole stack as one template — and inventing a monolithic all-in-one image just to
-have something for `<Repository>` to point at would mean maintaining a second, unsupported
-deployment shape.
+NovaCortex is five services (Redis, SurrealDB, Qdrant, API, Web UI) plus an optional Ollama
+sidecar. A CA *Docker template* installs exactly one container, and CA's whole value is that the
+Unraid UI can set paths, ports and secrets through `<Config>` entries. A submission that shipped
+two templates and told everyone to hand-edit a `.env` for the rest would not deliver that.
 
-So the install path stays **Docker Compose Manager**, and what we ship to CA is metadata that is
-true:
+So we ship **one template per service**, each with its settings as UI fields, plus the Compose
+file for people who prefer one click. Both paths produce the same five container names. What we
+deliberately do *not* do is invent a monolithic all-in-one image so that a single
+`<Repository>` can stand in for the stack — that would mean maintaining a second, unsupported
+deployment shape forever.
 
 | Artifact | Purpose |
 |---|---|
 | `ca_profile.xml` (repo root) | Repository overview, icon and support links shown on the maintainer profile. Required by CA; submission cannot be finalised without a non-empty `<Profile>`. |
-| `icon.svg` (repo root) | Repository icon referenced by `ca_profile.xml` and by both templates. |
-| `templates/unraid/novacortex-web.xml` | Docker template for the Web UI container alone. |
-| `templates/unraid/novacortex-api.xml` | Docker template for the API container alone. |
-| `docker-compose.unraid.yml` | The actual supported install, linked from both templates' `<Overview>`. |
+| `icon.svg` (repo root) | Repository icon referenced by `ca_profile.xml` and by every template. |
+| `templates/unraid/novacortex-redis.xml` | Redis — sessions and rate limits. |
+| `templates/unraid/novacortex-surrealdb.xml` | SurrealDB — memories, relation graph, knowledge base, tokens. |
+| `templates/unraid/novacortex-qdrant.xml` | Qdrant — vector index. |
+| `templates/unraid/novacortex-api.xml` | The REST + MCP API. |
+| `templates/unraid/novacortex-web.xml` | The Web UI. |
+| `docker-compose.unraid.yml` | The one-click alternative, linked from every template's `<Overview>`. |
 
-The two Docker templates are genuinely useful on their own — Unraid users who already run
-Qdrant, Redis and SurrealDB as separate containers can install just the API, and someone running
-the API elsewhere can install just the Web UI — but both `<Overview>` blocks say plainly that a
-fresh install should use Compose, and `<Requires>` names the missing dependencies.
+The three backing-service templates are NovaCortex-flavoured presets of upstream images, not a
+claim of ownership: `<Project>` points at the upstream project (surrealdb.com, qdrant.tech,
+redis.io), `<Support>` points at our issue tracker because we maintain the template, and each
+`<Overview>` says so in the first paragraph.
+
+### How the templates fit together
+
+The five containers share a user-defined Docker network called `novacortex`, created once with
+`docker network create novacortex`. That is not decoration: container-name DNS does not work on
+Docker's default bridge, and it is how `novacortex-api` reaches `ws://novacortex-surrealdb:8000`.
+Every template's `<Overview>` opens with that step and the install order.
+
+The template `<Name>` values are lowercase and identical to the compose `container_name` values,
+because Unraid names the container after `<Name>`. That is what makes
+`docker logs novacortex-api` work regardless of which path the user took.
+
+Redis, SurrealDB and Qdrant publish no ports, matching the Compose stack.
+
+### Two image quirks the templates work around
+
+Both are load-bearing; do not "simplify" them away without re-testing on a real server.
+
+**SurrealDB has no default `CMD`** (`ENTRYPOINT ["/surreal"]`, `Cmd: null`), so the template
+supplies `<PostArgs>start</PostArgs>`. Everything else goes through the documented `SURREAL_*`
+environment variables, which is what keeps the root password an ordinary masked template field.
+The image also defaults to uid 65532 while Unraid appdata is root-owned, so the template carries
+`<ExtraParams>--user 0:0</ExtraParams>`, mirroring `user: "0:0"` in the compose file.
+
+**`redis-server` takes its password as a command-line flag** and the official image exposes no
+environment variable for it, so a naive template would force users into the Post Arguments box.
+Instead `<PostArgs>` re-enters the image's own entrypoint through `sh -c`, which expands
+`"$REDIS_PASSWORD"` from a normal masked `<Config>` variable. The re-entry matters: on the second
+pass the entrypoint still sees `redis-server` as `$1` while running as root, so it chowns `/data`
+to uid 999 and drops privileges with `gosu` exactly as upstream intends, instead of leaving Redis
+running as root.
+
+`<PostArgs>` is worth a note of its own. Unraid reads and writes it as a first-class template
+field — it is the "Post Arguments" box in the container editor, serialised in
+`emhttp/plugins/dynamix.docker.manager/include/Helpers.php`, and appended after the image name in
+`docker run` — but it is **not** in CA's published [XML field
+reference](https://ca.unraid.net/submit/help/xml-field-reference). CA installs an app by handing
+Unraid the original XML from `TemplateURL`, so it should arrive intact. If SurrealDB or Redis
+comes up misconfigured after a CA install, check whether `PostArgs` survived before looking
+anywhere else.
 
 ### Compose source packages (future)
 
@@ -63,10 +108,13 @@ then commit the resulting SHA into the template). Adopting it means adding
   `<Repository>` resolves.
 - **The web image is amd64-only** (Next.js builds are impractically slow under QEMU arm64).
   Unraid is x86_64-only, so this does not affect Unraid users. The api image is amd64 + arm64.
-- **Versions must stay aligned.** Both templates pin the same tag the compose files default to.
-  `scripts/sync-unraid-templates.sh --check` enforces this, and CI runs it — a release bump has
-  to touch `docker-compose.yml`, `docker-compose.unraid.yml`, `scripts/gen-env.sh` and both
-  template XMLs together.
+- **The upstream pins are real too** — `surrealdb/surrealdb:v2.2`, `qdrant/qdrant:v1.14.0` and
+  `redis:7-alpine` all resolve anonymously on Docker Hub.
+- **Versions must stay aligned.** All five templates pin exactly what the compose file uses.
+  `scripts/sync-unraid-templates.sh --check` enforces this, and CI runs it — a NovaCortex release
+  bump has to touch `docker-compose.yml`, `docker-compose.unraid.yml`, `scripts/gen-env.sh` and
+  the api + web templates together, and bumping a backing service means the compose file and its
+  template.
 - **`templates/unraid/docker-compose.unraid.yml` is a generated copy** of the repo-root file.
   Edit the root file and run `scripts/sync-unraid-templates.sh`.
 
@@ -87,9 +135,13 @@ whenever the templates change.
       Issues link into the `<Profile>` text.
 - [x] **Repository icon that is not the starter placeholder** — `icon.svg`, the NovaCortex mark
       in the product's own palette (`#0a0e17` ground, `#00f0ff` cyan, `#ff2d95` accent).
-- [x] **Valid Docker template XML** — one file per app under `templates/unraid/`, each with
-      `Name`, a resolvable `Repository`, `Registry`, `Network`, `Support`, `Project`, `Overview`,
-      `Description`, `Category`, `WebUI` and `Icon`.
+- [x] **Valid Docker template XML** — one file per container under `templates/unraid/`, each
+      with `Name`, a resolvable `Repository`, `Registry`, `Network`, `Support`, `Project`,
+      `Overview`, `Description`, `Category`, `Icon` and `TemplateURL`, plus `WebUI` on the two
+      that have a browser interface.
+- [x] **Settings are `<Config>` fields, not documentation** — every appdata path, host port and
+      password the user must choose is an editable field in the Unraid UI. Nothing in path A
+      requires touching a file over SSH.
 - [x] **Every template has a `TemplateURL`** pointing at the raw GitHub URL of *that exact file*
       on `main`. These 404 until the branch is merged — verify them after merge.
 - [x] **CA-valid categories** — `AI:Tools Tools:Utilities`. Both paths exist in
@@ -120,6 +172,16 @@ for img in novacortex-api novacortex-web; do
   curl -s -o /dev/null -w "$img %{http_code}\n" -H "Authorization: Bearer $tok" \
     -H "Accept: application/vnd.oci.image.index.v1+json" \
     "https://ghcr.io/v2/nova-cognitive-systems/$img/manifests/1.3.2"
+done
+
+# 5. ...and so do the three upstream images the backing-service templates pin
+for spec in surrealdb/surrealdb:v2.2 qdrant/qdrant:v1.14.0 library/redis:7-alpine; do
+  repo=${spec%:*}; tag=${spec##*:}
+  tok=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:$repo:pull" \
+        | sed 's/.*"token":"\([^"]*\)".*/\1/')
+  curl -s -o /dev/null -w "$spec %{http_code}\n" -H "Authorization: Bearer $tok" \
+    -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json" \
+    "https://registry-1.docker.io/v2/$repo/manifests/$tag"
 done
 ```
 

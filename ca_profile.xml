@@ -6,15 +6,17 @@ NovaCortex is self-hosted, MCP-native long-term memory for AI agents — typed m
 knowledge base, all running on your own hardware. Agents talk to it over MCP (Claude,
 Cursor, Claude Code), REST, the CLI or the TypeScript/Python SDKs.
 
-This repository ships the Unraid distribution of NovaCortex:
+This repository ships the Unraid distribution of NovaCortex, installable two ways — both
+end up with the same five containers:
 
-- **Full stack (recommended):** `docker-compose.unraid.yml` runs SurrealDB, Qdrant, Redis,
-the NovaCortex API and the Web UI together via the **Docker Compose Manager** plugin.
-An optional `local-ai` profile adds an Ollama sidecar so embeddings and memory
+- **Community Apps templates:** `novacortex-redis`, `novacortex-surrealdb`,
+`novacortex-qdrant`, `novacortex-api` and `novacortex-web`. Install them in that order on a
+shared `novacortex` Docker network (`docker network create novacortex`). Appdata paths, host
+ports and passwords are all normal template fields, so nothing needs editing by hand. The
+three backing-service templates pin the same upstream images the Compose stack uses.
+- **Docker Compose Manager:** `docker-compose.unraid.yml` brings the whole stack up in one
+click. An optional `local-ai` profile adds an Ollama sidecar so embeddings and memory
 intelligence run fully offline — no memory text ever leaves the server.
-- **Single containers:** the templates under `templates/unraid/` install the NovaCortex
-Web UI or API on their own, for people who already run their own SurrealDB / Qdrant /
-Redis containers or a NovaCortex API elsewhere.
 
 Everything is Apache-2.0 and the free tier needs no license key or account. Images are
 published to GHCR at `ghcr.io/nova-cognitive-systems/novacortex-{api,web}`.
