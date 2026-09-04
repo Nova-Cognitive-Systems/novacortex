@@ -80,8 +80,11 @@ whenever the templates change.
 - [x] **OSI-approved licence at the repository root** — `LICENSE` (Apache-2.0). This covers the
       repository contents; container image licensing is assessed separately.
 - [x] **`ca_profile.xml` at the repository root with a non-empty `<Profile>`** — describes the
-      repository, links the icon, `WebPage` = <https://novacortex.dev>, and points support at
-      GitHub Issues. No Discord and no Unraid forum thread are claimed, because neither exists.
+      repository, links the icon, and sets `WebPage` = <https://novacortex.dev>. There is no
+      `<Discord>`, because there is no NovaCortex Discord. `<Forum>` — documented as "forum
+      thread **or support landing page**" — holds the GitHub Issues URL, since there is no
+      Unraid forum thread yet; if one is ever created, point `<Forum>` at it and move the
+      Issues link into the `<Profile>` text.
 - [x] **Repository icon that is not the starter placeholder** — `icon.svg`, the NovaCortex mark
       in the product's own palette (`#0a0e17` ground, `#00f0ff` cyan, `#ff2d95` accent).
 - [x] **Valid Docker template XML** — one file per app under `templates/unraid/`, each with

@@ -30,11 +30,14 @@ supported install is Compose, not a single Docker template.
    `REDIS_PASSWORD`, so generate them rather than inventing them:
 
    ```bash
-   # from a clone of the repo, on any machine with openssl
-   ./scripts/gen-env.sh                     # or --local-ai for the fully offline variant
+   # still in the project directory, on the Unraid terminal
+   curl -fsSL -o gen-env.sh \
+     https://raw.githubusercontent.com/Nova-Cognitive-Systems/novacortex/main/scripts/gen-env.sh
+   bash gen-env.sh .env        # or: bash gen-env.sh --local-ai .env
+   rm gen-env.sh
    ```
 
-   Copy the result next to `docker-compose.yml` and set `APPDATA=/mnt/user/appdata/novacortex`.
+   Then set `APPDATA=/mnt/user/appdata/novacortex` in the generated `.env`.
    `.env.unraid.example` in the repo root documents every value the compose file reads.
 
 5. **Compose Up**. First start pulls the pinned GHCR images and initialises the databases.
@@ -97,8 +100,8 @@ services you already run. They exist for people who, for example, already have Q
 on their server, or who want the Web UI on one box and the API on another. They are not a
 replacement for the Compose install — neither container is useful on its own.
 
-Both pin the same GHCR release as the compose file
-(`ghcr.io/nova-cognitive-systems/novacortex-{web,api}:1.3.2`) and offer `latest` as an alternate
+Both pin the same GHCR release the compose file defaults to (currently
+`ghcr.io/nova-cognitive-systems/novacortex-{web,api}:1.3.2`) and offer `latest` as an alternate
 tag in the template's branch selector. **The Web UI and API must run the same version.**
 
 See [`docs/unraid-community-apps.md`](../../docs/unraid-community-apps.md) for the Community
